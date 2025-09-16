@@ -1,0 +1,32 @@
+{
+  "collected_total": 0,
+  "new_total": 0,
+  "new_job_ids": [],
+  "scored": 0,
+  "export_files": [],
+  "duplicates_marked": 0,
+  "per_search": [],
+  "field_coverage": {
+    "location": 2.7,
+    "location_normalized": 2.7,
+    "company_name_normalized": 5.3,
+    "work_mode": 12.0,
+    "posted_at": 0.0,
+    "offered_salary_min": 10.7,
+    "benefits": 61.3
+  },
+  "score_distribution": {
+    "count": 75,
+    "mean": 0.3053,
+    "median": 0.3684,
+    "p90": 0.419,
+    "max": 0.9
+  },
+  "timing": {
+    "total_seconds": 0.013,
+    "collection_seconds": 0.0,
+    "enrichment_seconds": 0.0,
+    "scoring_seconds": 0.0,
+    "export_seconds": 0.0
+  }
+}

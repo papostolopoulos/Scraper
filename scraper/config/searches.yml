@@ -1,0 +1,6 @@
+searches:
+  - keywords: "Manager"
+    location: "San Francisco Bay Area"
+    date_posted: "past_week"  # options: past_24_hours, past_week, past_month
+    seniority: ["Mid-Senior", "Director"]
+    limit: 60

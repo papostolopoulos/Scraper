@@ -1,0 +1,16 @@
+excel
+sql
+power bi
+tableau
+python
+statistics
+a/b testing
+data visualization
+forecasting
+ETL
+machine learning
+stakeholder management
+financial modeling
+crm
+salesforce
+report automation

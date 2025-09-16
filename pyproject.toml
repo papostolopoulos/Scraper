@@ -1,0 +1,58 @@
+[project]
+name = "jobminer"
+version = "0.2.0"
+description = "Job collection and scoring pipeline"
+readme = "scraper/README.md"
+requires-python = ">=3.11"
+dependencies = [
+	"pydantic>=2.6",
+	"pandas>=2.1",
+	"openpyxl>=3.1",
+	"pyyaml>=6.0",
+	"rapidfuzz>=3.0",
+	"playwright>=1.44",
+	"sentence-transformers>=2.6; python_version>='3.11'",  # optional semantic
+]
+
+[project.optional-dependencies]
+dev = ["pytest","pytest-cov","pytest-timeout","pytest-xdist","pytest-rerunfailures","ruff","mypy","hypothesis","pre-commit"]
+
+[project.scripts]
+jobminer-export = "scraper.scripts.run_export:main"
+jobminer-pipeline = "scraper.scripts.run_pipeline:main"
+jobminer-cli = "scraper.scripts.job_cli:main"
+jobminer-score = "scraper.scripts.run_score:main"
+
+[build-system]
+requires = ["setuptools>=67","wheel"]
+build-backend = "setuptools.build_meta"
+[tool.mypy]
+python_version = "3.11"
+plugins = []
+warn_unused_configs = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+ignore_missing_imports = true
+exclude = ["tests/", "scripts/"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E","F","I","UP","B","SIM","PL"]
+ignore = []
+exclude = [".venv","data","exports"]
+
+[tool.ruff.format]
+quote-style = "preserve"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.ruff.lint.isort]
+known-first-party = ["jobminer"]
+
+[tool.ruff.lint.per-file-ignores]
+"scraper/tests/*" = ["S101","PL"]

@@ -1,0 +1,8 @@
+# Benefit keyword mappings to canonical benefit labels
+mappings:
+  health: ["health insurance", "medical", "medical insurance", "medical plan"]
+  dental: ["dental", "dental insurance"]
+  vision: ["vision", "vision insurance"]
+  401k: ["401k", "401(k)"]
+  remote: ["remote work", "work from home", "wfh"]
+  parental_leave: ["parental leave", "maternity leave", "paternity leave"]

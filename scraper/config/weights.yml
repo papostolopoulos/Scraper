@@ -1,0 +1,9 @@
+weights:
+  skill: 0.35
+  semantic: 0.35
+  recency: 0.15
+  seniority: 0.10
+  company: 0.05
+thresholds:
+  shortlist: 0.68
+  review: 0.50

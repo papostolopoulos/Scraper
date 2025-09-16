@@ -1,0 +1,61 @@
+python
+sql
+data analysis
+analytics
+dashboarding
+power bi
+tableau
+excel
+aws
+azure
+gcp
+cloud architecture
+microservices
+rest api
+graphql
+data modeling
+machine learning
+nlp
+statistics
+product management
+program management
+stakeholder management
+agile
+scrum
+kanban
+roadmapping
+risk management
+process improvement
+saas
+security
+compliance
+okrs
+metrics
+performance optimization
+etl
+data pipeline
+kubernetes
+docker
+terraform
+ansible
+linux
+shell scripting
+java
+javascript
+typeScript
+react
+node.js
+system design
+observability
+monitoring
+logging
+incident management
+customer success
+onboarding
+change management
+strategic planning
+financial analysis
+forecasting
+business intelligence
+cost optimization
+pricing

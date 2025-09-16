@@ -1,0 +1,165 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ '3.11', '3.12' ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('scraper/requirements.txt', 'pyproject.toml') }}
+          restore-keys: |
+            pip-${{ runner.os }}-${{ matrix.python-version }}-
+            pip-${{ runner.os }}-
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('scraper/requirements.txt') }}
+          restore-keys: |
+            pw-${{ runner.os }}-${{ matrix.python-version }}-
+            pw-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scraper/requirements.txt
+          pip install mypy ruff pip-audit pytest-rerunfailures coverage
+          python -m playwright install --with-deps chromium
+
+      - name: Lint (ruff)
+        run: |
+          python -m ruff check scraper/jobminer | tee ruff_report.txt
+
+      - name: Type check (mypy)
+        run: |
+          python -m mypy scraper/jobminer | tee mypy_report.txt
+
+      - name: Security audit (pip-audit)
+        continue-on-error: true
+        run: |
+          pip-audit -r scraper/requirements.txt || true
+
+      - name: Run tests (initial)
+        env:
+          SCRAPER_DISABLE_EVENTS: '1'
+          SCRAPER_DISABLE_FILE_LOGS: '1'
+        run: |
+          python -m pytest -q --cov=scraper/jobminer --cov-report=xml:coverage.xml --cov-report=term-missing:skip-covered || echo "TESTS_FAILED=1" >> $GITHUB_ENV
+          # Capture list of failed tests (nodeids)
+          if [ -f .pytest_cache/v/cache/lastfailed ]; then
+            echo "FAILED_LIST<<EOF" >> $GITHUB_ENV
+            python - <<'PY'
+import json, sys
+data=json.load(open('.pytest_cache/v/cache/lastfailed'))
+for k in data.keys():
+    print(k)
+PY
+            echo EOF >> $GITHUB_ENV
+          fi
+
+      - name: Rerun flaky failures only
+        if: env.TESTS_FAILED == '1'
+        env:
+          SCRAPER_DISABLE_EVENTS: '1'
+          SCRAPER_DISABLE_FILE_LOGS: '1'
+        run: |
+          RERUNS=${RERUN_FLAKY_COUNT:-2}
+          echo "Re-running only flaky-marked previously failed tests (reruns=$RERUNS)"
+          # Filter failed list for those marked flaky by invoking pytest --collect-only with marker info
+          echo "$FAILED_LIST" | tr '\r' '\n' | grep -v '^$' > failed_ids.txt || true
+          if [ ! -s failed_ids.txt ]; then
+            echo "No failed test list captured"; exit 0; fi
+          # Build list of flaky failed ids
+          python - <<'PY'
+import subprocess, json, os, sys
+failed=[l.strip() for l in open('failed_ids.txt') if l.strip()]
+if not failed:
+    sys.exit(0)
+flaky=[]
+for nodeid in failed:
+    # Collect markers for this nodeid
+    r=subprocess.run([sys.executable,'-m','pytest',nodeid,'-q','--collect-only','-m','flaky'],capture_output=True,text=True)
+    # If node collected (exit 0) under -m flaky filter, it's flaky
+    if r.returncode==0:
+        flaky.append(nodeid)
+if flaky:
+    open('flaky_failed.txt','w').write('\n'.join(flaky))
+open('non_flaky_failed.txt','w').write('\n'.join([f for f in failed if f not in set(flaky)]))
+PY
+          if [ -s flaky_failed.txt ]; then
+            echo "Flaky failed tests:"; cat flaky_failed.txt
+            python -m pytest -q --cov=scraper/jobminer --cov-append --cov-report=xml:coverage.xml --reruns $RERUNS --reruns-delay 1 $(paste -sd' ' flaky_failed.txt) || echo "FLAKY_RERUN_FAILED=1" >> $GITHUB_ENV
+          fi
+          if [ -s non_flaky_failed.txt ]; then
+            echo "Non-flaky failures remain:"; cat non_flaky_failed.txt; echo "NON_FLAKY_FAILED=1" >> $GITHUB_ENV
+          fi
+
+      - name: Fail if non-flaky failures present
+        if: env.NON_FLAKY_FAILED == '1'
+        run: |
+          echo "Non-flaky tests failed. Not subject to reruns." >&2
+          exit 1
+
+      - name: Fail if flaky reruns exhausted
+        if: env.FLAKY_RERUN_FAILED == '1'
+        run: |
+          echo "Flaky tests still failing after reruns." >&2
+          exit 1
+
+      - name: Generate HTML coverage (post-rerun)
+        if: env.TESTS_FAILED == '1' && env.NON_FLAKY_FAILED != '1'
+        run: |
+          python -m coverage html -d htmlcov
+
+  - name: Generate coverage badge
+        if: always()
+        run: |
+          python scripts/coverage_badge.py coverage.xml coverage_badge.json || echo "badge generation skipped"
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: |
+            coverage.xml
+            htmlcov
+            coverage_badge.json
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "Ruff + mypy + tests completed (Python ${{ matrix.python-version }})" > summary.txt
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts-${{ matrix.python-version }}
+          path: |
+            summary.txt
+            ruff_report.txt
+            mypy_report.txt

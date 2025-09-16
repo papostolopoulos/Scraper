@@ -1,0 +1,8 @@
+sources:
+  - name: mock
+    enabled: true
+    module: scraper.jobminer.sources.mock_source
+    class: MockJobSource
+    options:
+      count: 5
+      title: Sample Role

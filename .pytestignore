@@ -1,0 +1,8 @@
+# Patterns of files / directories for pytest to ignore during test collection.
+# This prevents accidental collection of generated artifacts like captured output logs.
+
+test_output.txt
+*.pytest-run.txt
+logs/
+artifacts/
+# You can add more patterns here as needed.

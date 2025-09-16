@@ -1,0 +1,14 @@
+# Runtime tunables for collection timing
+# Adjust values to fine-tune politeness and dynamic content readiness.
+# Environment variable overrides (take precedence if set):
+#   SCRAPER_LOCATION_RETRY1, SCRAPER_LOCATION_RETRY2 (seconds)
+#   SCRAPER_POLITE_MIN, SCRAPER_POLITE_MAX
+#   SCRAPER_SCROLL_MIN, SCRAPER_SCROLL_MAX
+#   SCRAPER_FORCE_HEADLESS=1 forces headless; =0 forces headed (unless CLI overrides)
+#   SCRAPER_ABORT_IF_LOGIN=1 aborts automatically on login redirect
+location_retry_first_delay: 0.6
+location_retry_second_delay: 1.2
+polite_sleep_min: 1.0
+polite_sleep_max: 2.5
+scroll_pause_min: 1.2
+scroll_pause_max: 2.0

@@ -1,0 +1,7 @@
+# Redaction configuration for export text fields
+enabled: true
+rules:
+  email: '\\b[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}\\b'
+  phone: '(?:\\+?\\d[\\d\\s().-]{6,}\\d)'
+  url: 'https?://[^\\s]+'
+replacement: '[REDACTED]'

@@ -1,0 +1,7 @@
+overlap:
+  min_coverage: 0.4
+  min_fuzzy: 82
+semantic:
+  enable: true
+  min_similarity: 0.64
+  # Note: Actual enablement resolved with precedence -> CLI --no-semantic > env (SCRAPER_NO_SEMANTIC / SCRAPER_SEMANTIC_ENABLE) > this file.

@@ -1,0 +1,15 @@
+# Compensation normalization configuration
+# base_currency: canonical target currency for conversion (must be present in currency_rates implicitly as 1.0 if different)
+base_currency: USD
+currency_rates:
+  EUR: 1.08
+  GBP: 1.27
+  CAD: 0.74
+  AUD: 0.66
+unit_multipliers:  # simple annualization heuristics
+  yearly: 1
+  annual: 1
+  month: 12
+  monthly: 12
+  hour: 2080   # 40 * 52
+  hourly: 2080
