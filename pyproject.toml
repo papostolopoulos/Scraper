@@ -26,6 +26,13 @@ jobminer-score = "scraper.scripts.run_score:main"
 [build-system]
 requires = ["setuptools>=67","wheel"]
 build-backend = "setuptools.build_meta"
+[tool.setuptools]
+packages = ["scraper", "scraper.jobminer", "scraper.jobminer.sources", "scraper.scripts"]
+package-dir = {"scraper" = "scraper"}
+include-package-data = true
+
+[tool.setuptools.package-data]
+"scraper" = ["config/*.yml"]
 [tool.mypy]
 python_version = "3.11"
 plugins = []
