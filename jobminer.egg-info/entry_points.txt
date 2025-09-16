@@ -1,0 +1,5 @@
+[console_scripts]
+jobminer-cli = scraper.scripts.job_cli:main
+jobminer-export = scraper.scripts.run_export:main
+jobminer-pipeline = scraper.scripts.run_pipeline:main
+jobminer-score = scraper.scripts.run_score:main
