@@ -272,26 +272,14 @@ db.upsert_jobs([job])
 ```
 
 ## Next Steps
-- Implement collection (manual paste or browser automation) → populate DB.
-- Add resume parsing + skill expansion.
-- Integrate scoring pipeline script.
-- Add status update CLI.
-- Add scheduler (Windows Task Scheduler) for daily run.
- - Add Playwright collector (future) respecting delays.
 
 ## Collector Usage (Optional, ToS risk)
 1. Ensure dependencies installed and run `python -m playwright install` once.
 2. Run `python scraper/scripts/run_collect.py` with `headless=False` (default). A browser will open. Log in to LinkedIn once; the profile is stored in `scraper/data/browser_profile`.
-3. The script navigates saved searches from `config/searches.yml`, loads job list, opens each card, extracts details (including salary hints and benefits), and stores them in the DB.
-4. After collection, run `run_score.py` and `run_export.py`.
 
 Safety: keep run frequency low, add delays, avoid parallelism, and respect site policies.
 
-## Performance / Lazy Imports
-Cold import time was optimized by deferring heavy dependencies:
-
 - Playwright, Pydantic models, and rapidfuzz are imported only when needed.
-- Structured logging and rotating file handlers are skipped unless events are written.
 
 Environment flags (set before importing modules):
 

@@ -259,7 +259,7 @@ Prepared: (Generated automatically)
 
 <!-- NEXT_STEP_START -->
 ### Suggested Next Step
-Wire up scheduling and add an optional weekly Markdown summary: schedule the daily snapshot via Windows Task Scheduler and add a `scripts/weekly_summary.py` that aggregates `daily_snapshots/history.jsonl` into a concise weekly report.
+Polish the dashboard UX and release hygiene: add legends/tooltips to charts and a "latest highlights" card; finalize 1.0.0 release notes and tag.
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.
