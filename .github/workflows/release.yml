@@ -1,0 +1,63 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+      - name: Build wheel & sdist
+        run: |
+          python -m build
+      - name: Extract version
+        id: version
+        run: |
+          echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          python - <<'PY'
+import re, pathlib, os
+cl = pathlib.Path('CHANGELOG.md').read_text(encoding='utf-8')
+tag = os.environ['GITHUB_REF_NAME']
+pattern = rf"## \[{re.escape(tag.lstrip('v'))}\].*?(?=\n## \[|\Z)"
+m = re.search(pattern, cl, re.DOTALL)
+if not m:
+    # Fallback to tag with leading v
+    pattern2 = rf"## \[{re.escape(tag)}\].*?(?=\n## \[|\Z)"
+    m = re.search(pattern2, cl, re.DOTALL)
+section = m.group(0).strip() if m else f"Release {tag}"
+# Escape EOF marker issues
+print(section)
+open('RELEASE_NOTES.txt','w',encoding='utf-8').write(section)
+PY
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-artifacts
+          path: dist/*

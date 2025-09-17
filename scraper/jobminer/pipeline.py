@@ -218,6 +218,20 @@ def score_all(db: JobDB, resume_pdf: Path, seed_skills_path: Path, target_senior
             'parallel_workers': max_workers,
             'parallel_enabled': max_workers > 1
         }
+        # Optional: embed semantic benchmark metrics for observability
+        try:
+            bench_flag = os.getenv('SCRAPER_SEMANTIC_BENCH')
+            if bench_flag and bench_flag.lower() not in ('0', 'false', 'no'):  # enabled
+                limit_env = os.getenv('SCRAPER_SEMANTIC_BENCH_LIMIT')
+                limit_val = int(limit_env) if (limit_env and limit_env.isdigit()) else 10
+                # Import lazily to avoid overhead when disabled
+                from scraper.scripts.benchmark_semantic import benchmark as _bench
+                bench_metrics, bench_path = _bench(limit=limit_val)
+                # Attach metrics and output path for traceability
+                summary['semantic_benchmark'] = {**bench_metrics, 'output_path': str(bench_path)}
+        except Exception:
+            # Non-fatal; ignore failures in benchmark embedding
+            pass
         try:
             SETTINGS.metrics_output_path.parent.mkdir(parents=True, exist_ok=True)
             SETTINGS.metrics_output_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')

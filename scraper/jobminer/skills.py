@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import re
 
 # rapidfuzz is heavy; defer import until needed
@@ -54,7 +54,7 @@ def extract_resume_overlap_skills(description: str, resume_skills: List[str], co
             out.append(raw)
     return out
 
-def extract_skills(description: str, seed_skills: List[str], window: int = 8) -> List[str]:
+def extract_skills(description: str, seed_skills: List[str], window: int = 8, semantic: bool | None = None) -> List[str]:
     """Improved heuristic skill extraction.
     Changes vs previous:
       - Accept 70% token coverage (anywhere) for multi-word skill.
@@ -126,4 +126,13 @@ def extract_skills(description: str, seed_skills: List[str], window: int = 8) ->
             results.append((raw_skill, score))
             seen.add(key)
     results.sort(key=lambda x: (-x[1], seed_skills.index(x[0])))
-    return [s for s, _ in results[:40]]
+    heuristic = [s for s, _ in results[:40]]
+    # Optional semantic enrichment stage
+    if semantic is True:
+        try:
+            from .semantic_enrich import SemanticEnricher  # local import to avoid overhead if disabled
+            enricher = SemanticEnricher()
+            return enricher.enrich(description, heuristic, seed_skills)
+        except Exception:  # pragma: no cover - defensive fallback
+            return heuristic
+    return heuristic

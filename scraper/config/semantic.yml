@@ -1,0 +1,10 @@
+# Semantic enrichment configuration
+# Controls lightweight TF-IDF based contextual skill expansion.
+# Values can be overridden by environment variables:
+#   SCRAPER_SEMANTIC_THRESHOLD (float)
+#   SCRAPER_SEMANTIC_MAX_NEW (int)
+#   SCRAPER_SEMANTIC_ENABLE_BIGRAMS (0/1 or true/false)
+
+similarity_threshold: 0.32   # Minimum cosine similarity for adding a new skill
+max_new: 15                   # Safety cap on number of semantic-added skills appended
+enable_bigrams: true          # Include adjacent bigram tokens (improves contextual match)

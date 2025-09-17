@@ -23,6 +23,15 @@ For safe database evolution steps (adding/removing columns, bumping schema versi
 ### Release Process
 Manual tagging & publishing steps documented in `docs/release_process.md`.
 
+#### Automated GitHub Release
+Pushing an annotated tag `vX.Y.Z` triggers a GitHub Action (`.github/workflows/release.yml`) that:
+1. Builds wheel + sdist
+2. Extracts the corresponding CHANGELOG section
+3. Creates a GitHub Release with notes
+4. Uploads build artifacts
+
+View workflow runs under the Actions tab after pushing a tag.
+
 ## Multi-Source Ingestion (Experimental)
 Configure multiple job sources via `scraper/config/sources.yml`:
 
@@ -43,6 +52,78 @@ python scraper/scripts/run_ingest.py --config scraper/config/sources.yml
 ```
 
 Sources implement a simple interface (`fetch() -> List[JobPosting]`). Internal IDs are automatically namespaced (`source_name:raw_id`) to avoid collisions and enable cross-source dedupe.
+
+### Indeed Adapter (Local JSON Loader)
+To respect Terms of Service, the Indeed adapter does not perform automated scraping. Instead it loads a local JSON export you captured manually (browser save, copy/paste, or API export where permitted).
+
+Example config entry:
+```yaml
+sources:
+    - name: indeed
+        enabled: true
+        module: scraper.jobminer.sources.indeed_source
+        class: IndeedJobSource
+        options:
+            path: data/sample/indeed_jobs.json
+            limit: 25              # optional cap
+            default_location: Remote
+    - name: mock
+        enabled: true
+        module: scraper.jobminer.sources.mock_source
+        class: MockJobSource
+        options:
+            count: 3
+```
+
+Run ingestion:
+```powershell
+python scraper/scripts/run_ingest.py --config scraper/config/sources.yml
+```
+
+Sample file provided at `data/sample/indeed_jobs.json` to validate pipeline behavior. The adapter performs light normalization:
+- Accepts varied key names for id (id | job_id | jk), title (title | job_title), company (company | company_name) and description (description | snippet | desc)
+- Tries multiple date formats or epoch timestamps
+- Normalizes company names by removing trailing "Inc." (case-insensitive)
+
+Resulting jobs are namespaced as `indeed:<raw_id>` during normalization (handled by framework). This enables safe coexistence with other sources before dedupe.
+
+
+## Semantic Enrichment Refinement
+When the semantic toggle is enabled, a lightweight TF-IDF based `SemanticEnricher` supplements heuristic skill matches. It:
+1. Tokenizes job description + seed skills (with optional bigrams)
+2. Builds mini TF-IDF corpus (description + each skill phrase)
+3. Computes cosine similarity of each seed phrase vector to the job description vector
+4. Appends any additional seed skills above threshold not already matched, preserving the original heuristic ordering as a prefix.
+
+Deterministic: no randomness, order = (heuristic skills) + (new semantic additions sorted by similarity then seed order). Fallback is safe—if enrichment errors, heuristic set is returned unchanged.
+
+### Configuring Semantic Enrichment
+Configuration file: `scraper/config/semantic.yml`
+
+Keys:
+- similarity_threshold (float, default 0.32): minimum cosine similarity to add a new skill
+- max_new (int, default 15): cap on number of semantic-added skills
+- enable_bigrams (bool, default true): include bigram tokens (e.g., "machine_learning")
+
+Environment overrides (take precedence over file):
+- SCRAPER_SEMANTIC_THRESHOLD
+- SCRAPER_SEMANTIC_MAX_NEW
+- SCRAPER_SEMANTIC_ENABLE_BIGRAMS (1/0, true/false)
+
+These options are loaded lazily inside the enricher; direct constructor args also override config/env in programmatic use.
+
+### Benchmarking Semantic Overhead
+Run the benchmark script to compare heuristic-only vs semantic-enabled extraction timing and enrichment effect:
+```powershell
+python scraper/scripts/benchmark_semantic.py --limit 200
+```
+Outputs `scraper/data/benchmarks/semantic_benchmark.json` with metrics:
+- heuristic_time_s / semantic_time_s
+- avg_skills_heuristic / avg_skills_semantic / avg_added_semantic
+- speed_ratio (semantic_time / heuristic_time)
+- active config parameters (threshold, bigrams, max_new)
+
+Use env vars (`SCRAPER_SEMANTIC_THRESHOLD`, etc.) before running to profile different settings.
 
 
 ## Quickstart (5 Minutes)
@@ -411,6 +492,9 @@ Output:
 - Exports under `scraper/data/exports/`
 - Structured events appended to `collector.events.jsonl` (disable via env vars below)
 
+Optional observability:
+- Set `$env:SCRAPER_SEMANTIC_BENCH='1'` to embed a semantic enrichment benchmark snapshot into the run summary. Optionally cap sampled jobs with `$env:SCRAPER_SEMANTIC_BENCH_LIMIT` (default 10). Metrics are also written to `scraper/data/benchmarks/semantic_benchmark.json`.
+
 Recommended before first run:
 ```
 python -m playwright install
@@ -420,7 +504,55 @@ Environment optimizations (optional):
 ```
 $env:SCRAPER_DISABLE_FILE_LOGS='1'
 $env:SCRAPER_DISABLE_EVENTS='1'
+$env:SCRAPER_SEMANTIC_BENCH='1'         # include semantic benchmark metrics in summary
+$env:SCRAPER_SEMANTIC_BENCH_LIMIT='15'  # sample size for the benchmark (optional)
 ```
+
+## Daily Snapshot 📈
+Capture a small daily snapshot of key metrics for trend tracking.
+
+Basic usage (PowerShell):
+```
+python scraper/scripts/daily_snapshot.py               # compute snapshot only
+python scraper/scripts/daily_snapshot.py --score-first # run a quick scoring pass first
+```
+
+Outputs:
+- `scraper/data/daily_snapshots/YYYY-MM-DD.json`
+- `scraper/data/daily_snapshots/history.jsonl` (append-only)
+
+Tip: Use Windows Task Scheduler to run once a day. Create a Basic Task and set the Action to start a program:
+- Program/script: your Python executable
+- Add arguments: `scraper/scripts/daily_snapshot.py --score-first`
+- Start in: repository root directory
+
+## Weekly Summary 🗓️
+Produce a concise weekly Markdown report from snapshot history.
+
+Usage (PowerShell):
+```
+python scraper/scripts/weekly_summary.py                # last 7 days
+python scraper/scripts/weekly_summary.py --days 14      # last 14 days
+python scraper/scripts/weekly_summary.py --json         # print JSON summary to stdout
+```
+
+Outputs:
+- `scraper/data/daily_snapshots/weekly_summary.md`
+
+You can schedule this weekly (or after the daily snapshot) using Windows Task Scheduler similarly to the daily job.
+
+## Simple HTML Dashboard 📊
+Generate a lightweight static dashboard from daily snapshots.
+
+Usage (PowerShell):
+```
+python scraper/scripts/generate_dashboard.py
+```
+
+Output:
+- `scraper/data/dashboard/index.html`
+
+Open the HTML file in your browser. Consider scheduling it after the daily snapshot to keep visuals fresh.
 
 ### Semantic Enrichment Toggle
 The semantic layer (sentence embeddings to infer extra skills) can be disabled three ways (precedence highest first):

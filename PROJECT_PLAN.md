@@ -49,51 +49,42 @@
 | CI Workflow Hardening | Matrix Python versions, security audit, artifacts, caching. | Cross-version confidence and supply chain vigilance. |
 | Fast Test Script | One command to run quick subset of tests. | Encourages frequent verification. |
 
+| External Source Adapter (Indeed) | Added a non-scraping loader for local Indeed JSON with normalization and ID namespacing. | Enables safe multi-source ingestion and offline testing without live collection (ToS‑friendly). |
+| Semantic Config Externalization | Introduced `config/semantic.yml` with environment overrides and a `max_new` cap. | Easier tuning, deterministic runs, and safe bounds on enrichment additions. |
+| Semantic Benchmark & Caching | Added benchmark script, seed token caching, and optional embedding of metrics into run summary. | Visibility into enrichment overhead and trend tracking; faster repeated runs. |
+
 ## 3. Remaining Tasks (To Reach “Complete” Definition)
 Grouped by theme (plain language first):
 
 A. Data Quality & Enrichment
-- Add semantic similarity or embedding-based skill expansion (optional if already partially done) with toggle + tests.
-- Add benefit & compensation normalization (currency conversion, standard naming) if needed for ranking.
-- Add deduplication rules refinement (cluster similar postings across sources).
+- Consider embedding-based skill expansion (optional) with toggle + tests (semantic TF‑IDF enrichment exists today).
 
 B. User Experience & Transparency
-- Add per-job explanation export (why it scored high: matched skills, bonuses, penalties).
-- Add configurable weighting file with validation + schema test.
-- Provide a simple interactive CLI command to mark outcome (applied / interview / rejected) and track funnel metrics.
+- (No pending items — explanations, weighting config, and outcome CLI are implemented.)
 
 C. Reliability & Monitoring
-- Introduce alert on significant drop in average score or skill extraction rate (simple threshold comparison using run summary history).
-- Historical metrics persistence (append run summaries to a log for trend charts).
+- Implement daily snapshot automation (small, consistent dataset) and persist key metrics for trend analysis.
 - Optional lightweight health dashboard (local HTML or Markdown generation).
 
 D. Scaling & Performance
-- Parallel skill extraction (respecting rate limits) with a concurrency cap.
-- Batch export optimization (avoid loading entire dataset in memory if it grows large).
+- (No pending items — parallel extraction and streaming export are implemented.)
 
 E. Data Governance & Safety
-- Add anonymization or redaction option for exports (remove PII if any appears).
-- Add explicit ToS compliance guardrail (require explicit flag to enable automated collection).
+- (No pending items — redaction and ToS compliance gate are implemented.)
 
 F. Test & Quality Gaps
-- Add property-based tests for skill extraction edge cases (empty / very long / noisy descriptions).
-- Add fuzz test for resume parsing robustness.
-- Increase branch coverage for less-touched modules (benefits, dedupe).
+- (No pending items — property-based/fuzz tests and branch coverage uplift are implemented.)
 
 G. Documentation & Onboarding
-- Create quickstart section (5 minute setup path) in README.
-- Add architecture diagram (modules, data flow, key caches, DB) in `docs/`.
-- Document migration playbook (how to add a DB field safely).
+- (No pending items — Quickstart, architecture diagram, and migration playbook are published.)
 
 H. Release & Distribution
-- Package project (build wheel / publish optional internal PyPI).
-- Versioning strategy (semantic version tags on main changes).
-- Changelog file with automation stub.
+- Finalize 1.0.0 release and polish changelog as features land.
 
 I. Optional Stretch Features
-- Multi-source ingestion (Indeed / other boards) via plug-in interface.
+- Additional sources (beyond Indeed) via plug‑in interface.
 - Resume A/B comparison (two resumes, scoring deltas).
-- Skill gap recommender (top missing skills per cluster of high-interest jobs).
+- Skill gap recommender (top missing skills per cluster of high‑interest jobs).
 
 ## 3a. MVP Definition & Priority Order
 **MVP Goal:** Deliver daily ranked exports with transparent scoring explanations and stable core quality signals.
@@ -130,6 +121,8 @@ I. Optional Stretch Features
 | Packaging + versioning | Release | 5 | 1 | Done | pyproject + console scripts + changelog |
 | Release 0.2.0 prep | Release | 2 | 0.5 | Done | Changelog 0.2.0, version bump, release & migration docs |
 | Multi-source ingestion | Stretch | 6 | 2 | Done | Plugin framework + mock source + ingest script + tests |
+| Release automation (GH Actions) | Release | 2 | 0.5 | Done | Tag-triggered build + release notes extraction |
+| Semantic enrichment refinement | Post-MVP | 5 | 1 | Done | TF-IDF cosine expansion + deterministic ordering + tests |
 
 > Actual Hours: Will be filled when each task completes; variance tracked (+/- %).
 
@@ -224,11 +217,6 @@ DoD:
 
 (Stretch features to be scheduled after core completion or in separate post-MVP epics.)
 
-<!-- NEXT_STEP_START -->
-### Suggested Next Step
-Start Task: Branch coverage uplift (target low-hit modules & add tests).
-<!-- NEXT_STEP_END -->
-
 ## 7. Governance & Working Agreements
 - Keep flaky tests to an explicit small set; removal required once stabilized.
 - No merging to main with decreased coverage or failed type/lint gates (unless documented exception).
@@ -271,7 +259,7 @@ Prepared: (Generated automatically)
 
 <!-- NEXT_STEP_START -->
 ### Suggested Next Step
-Finalize 0.2.0 tag & wheel build, then consider semantic enrichment refinement or additional real source adapter.
+Wire up scheduling and add an optional weekly Markdown summary: schedule the daily snapshot via Windows Task Scheduler and add a `scripts/weekly_summary.py` that aggregates `daily_snapshots/history.jsonl` into a concise weekly report.
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.

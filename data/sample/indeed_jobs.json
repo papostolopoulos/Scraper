@@ -1,0 +1,26 @@
+[
+  {
+    "id": "123abc",
+    "title": "Data Engineer",
+    "company": "Acme Inc.",
+    "location": "Remote",
+    "description": "Build data pipelines in Python and SQL. Maintain ETL jobs and optimize warehouse performance.",
+    "date": "2025-09-12"
+  },
+  {
+    "jk": "b789xz",
+    "job_title": "Machine Learning Engineer",
+    "company_name": "Visionary Analytics Inc.",
+    "job_location": "New York, NY",
+    "snippet": "Design ML models, deploy inference services, collaborate with data scientists on experimentation.",
+    "posted": "2025-09-10"
+  },
+  {
+    "job_id": "777",
+    "title": "Platform Engineer",
+    "company": "Edge Systems",
+    "location": "Austin, TX",
+    "description": "Own CI/CD pipelines, infrastructure as code (Terraform), and Kubernetes cluster reliability.",
+    "posted_at": 1736467200
+  }
+]

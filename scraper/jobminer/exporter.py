@@ -66,7 +66,7 @@ class Exporter:
                     matching_data = yaml.safe_load(f) or {}
         except Exception:
             pass
-    if self.stream:
+        if self.stream:
             return self._export_streaming(jobs, weights_data, matching_data)
         return self._export_non_streaming(jobs, weights_data, matching_data)
 
@@ -145,7 +145,7 @@ class Exporter:
             self._benefit_map = load_benefit_mappings(root)
         min_usd, max_usd = convert_salary(j.offered_salary_min, j.offered_salary_max, getattr(j, 'offered_salary_currency', None), 'yearly', self._comp_cfg)
         benefits_norm = map_benefits(j.benefits, self._benefit_map) if j.benefits else []
-    record = {
+        record = {
             'job_id': str(j.job_id) if j.job_id is not None else '',
             'title': j.title,
             'company_name': j.company_name,

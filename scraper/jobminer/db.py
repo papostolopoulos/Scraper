@@ -72,7 +72,18 @@ class JobDB:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(SCHEMA_SQL)
             conn.execute(META_TABLE_SQL)
-            conn.execute(STATUS_HISTORY_SQL)
+            # STATUS_HISTORY_SQL contains multiple statements; use executescript
+            try:
+                conn.executescript(STATUS_HISTORY_SQL)
+            except Exception:
+                # Fallback attempt: split on semicolons (best effort)
+                for stmt in STATUS_HISTORY_SQL.split(';'):
+                    s = stmt.strip()
+                    if s:
+                        try:
+                            conn.execute(s)
+                        except Exception:
+                            pass
             # schema version check
             try:
                 cur = conn.execute("SELECT value FROM meta WHERE key='schema_version'")

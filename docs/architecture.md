@@ -13,7 +13,8 @@ graph TD
     B -->|store| DB[(SQLite Jobs DB)]
     R --> S[skills.py\nExtract Skills]
     DB --> S
-    S --> SC[Scoring Pipeline\n(score.py)]
+    S --> SEM[semantic_enrich.py\nTF-IDF Expand]
+    SEM --> SC[Scoring Pipeline\n(score.py)]
     WEIGHT[weights config\nweights.yaml/json] --> SC
     SC --> DED[dedupe.py\nDeterministic + Similarity]
     DED --> ANO[anomaly.py\nRun Metrics]
