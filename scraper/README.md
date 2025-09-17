@@ -7,12 +7,6 @@ Two cache layers accelerate scoring:
 
 To clear caches manually:
 
-```bash
-python -m scraper.scripts.clear_caches --resume --skills
-```
-
-Cache stats (hits/misses) logged each pipeline run.
-# Job Scraper / Scoring Framework (MVP)
 
 ## Architecture Overview
 See `docs/architecture.md` for the Mermaid diagram and module responsibilities (resume parsing → skill extraction → scoring → dedupe → anomaly detection → export with normalization, redaction, compliance gating).
@@ -67,6 +61,11 @@ sources:
             path: data/sample/indeed_jobs.json
             limit: 25              # optional cap
             default_location: Remote
+The static dashboard now includes:
+- Legends for each chart series
+- Hover tooltips over data points
+- A "Latest Highlights" card summarizing the most recent snapshot (with deltas from the previous day when available)
+- A link to the latest weekly summary when `scraper/data/daily_snapshots/weekly_summary.md` exists
     - name: mock
         enabled: true
         module: scraper.jobminer.sources.mock_source
