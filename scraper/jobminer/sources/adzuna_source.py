@@ -6,6 +6,27 @@ import os
 import re
 
 import httpx
+class AdzunaError(Exception):
+    """Base Adzuna error."""
+
+
+class AdzunaAuthError(AdzunaError):
+    pass
+
+
+class AdzunaRateLimitError(AdzunaError):
+    pass
+
+
+class AdzunaHTTPError(AdzunaError):
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+class AdzunaNetworkError(AdzunaError):
+    pass
 
 from ..models import JobPosting
 
@@ -95,44 +116,54 @@ class AdzunaSource:
         if self.contract_type in ("permanent", "contract"):
             base_params["contract_type"] = self.contract_type
 
-        with httpx.Client(timeout=20.0, headers=headers) as client:
-            for page in range(1, pages + 1):
-                url = f"{base}/{page}"
-                try:
+        try:
+            with httpx.Client(timeout=20.0, headers=headers) as client:
+                for page in range(1, pages + 1):
+                    url = f"{base}/{page}"
                     resp = client.get(url, params=base_params)
+                    status = resp.status_code
+                    if status in (401, 403):
+                        raise AdzunaAuthError("Unauthorized (check ADZUNA_APP_ID / KEY and account permissions)")
+                    if status == 429:
+                        raise AdzunaRateLimitError("Rate limited by Adzuna (HTTP 429)")
+                    if 400 <= status < 600 and status not in (200,):
+                        # Generic upstream failure
+                        raise AdzunaHTTPError(status, f"Adzuna upstream error {status}")
                     resp.raise_for_status()
-                    data = resp.json()
-                except httpx.HTTPError as e:
-                    # Fail soft: return what we have so far
-                    break
-                results = data.get("results", []) if isinstance(data, dict) else []
-                if not results:
-                    break
-                for r in results:
                     try:
-                        job = JobPosting(
-                            job_id=str(r.get("id") or r.get("adref") or r.get("redirect_url")),
-                            title=r.get("title") or "",
-                            company_name=(r.get("company", {}) or {}).get("display_name", ""),
-                            location=(r.get("location", {}) or {}).get("display_name"),
-                            work_mode=_infer_work_mode(r.get("title", ""), r.get("description")),
-                            posted_at=_parse_created(r.get("created")),
-                            employment_type=r.get("contract_time"),
-                            seniority_level=None,
-                            description_raw=r.get("description"),
-                            description_clean=_strip_html(r.get("description")),
-                            apply_method="external",
-                            apply_url=r.get("redirect_url"),
-                            offered_salary_min=r.get("salary_min"),
-                            offered_salary_max=r.get("salary_max"),
-                            offered_salary_currency=(r.get("salary_currency") or ("USD" if self.country.lower()=="us" else None)),
-                            geocode_lat=r.get("latitude"),
-                            geocode_lon=r.get("longitude"),
-                        )
-                        items.append(job)
+                        data = resp.json()
                     except Exception:
-                        continue
-                # Stop early if fewer than requested
-                if len(results) < per:
-                    break
+                        raise AdzunaHTTPError(status, "Invalid JSON from Adzuna")
+                    results = data.get("results", []) if isinstance(data, dict) else []
+                    if not results:
+                        break
+                    for r in results:
+                        try:
+                            job = JobPosting(
+                                job_id=str(r.get("id") or r.get("adref") or r.get("redirect_url")),
+                                title=r.get("title") or "",
+                                company_name=(r.get("company", {}) or {}).get("display_name", ""),
+                                location=(r.get("location", {}) or {}).get("display_name"),
+                                work_mode=_infer_work_mode(r.get("title", ""), r.get("description")),
+                                posted_at=_parse_created(r.get("created")),
+                                employment_type=r.get("contract_time"),
+                                seniority_level=None,
+                                description_raw=r.get("description"),
+                                description_clean=_strip_html(r.get("description")),
+                                apply_method="external",
+                                apply_url=r.get("redirect_url"),
+                                offered_salary_min=r.get("salary_min"),
+                                offered_salary_max=r.get("salary_max"),
+                                offered_salary_currency=(r.get("salary_currency") or ("USD" if self.country.lower()=="us" else None)),
+                                geocode_lat=r.get("latitude"),
+                                geocode_lon=r.get("longitude"),
+                            )
+                            items.append(job)
+                        except Exception:
+                            continue
+                    # Stop early if fewer than requested
+                    if len(results) < per:
+                        break
+        except httpx.RequestError as e:
+            raise AdzunaNetworkError(f"Network error contacting Adzuna: {e}") from e
         return items

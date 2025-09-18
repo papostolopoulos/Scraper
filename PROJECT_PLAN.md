@@ -288,3 +288,92 @@ Build the MVP web flow: serve a minimal HTML form (resume upload + required sear
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.
+
+## 11. Web UI Access & Deployment Instructions (MVP)
+
+### 11.1 Local Usage (Recommended for Full Functionality)
+The FastAPI backend must run locally because it needs your private Adzuna API credentials. The static HTML form (currently in `scraper/web/index.html`) submits to the local API.
+
+Steps:
+1. Create and activate a virtual environment (if not already):
+	```powershell
+	python -m venv .venv
+	.\.venv\Scripts\Activate.ps1
+	```
+2. Install the project (editable) with extras:
+	```powershell
+	pip install -e .
+	```
+3. Set required environment variables (PowerShell syntax):
+	```powershell
+	$env:ADZUNA_APP_ID = "<your_app_id>"
+	$env:ADZUNA_APP_KEY = "<your_app_key>"
+	```
+	Optional (tuning / diagnostics):
+	- `$env:JOBMINER_LOG_LEVEL = "INFO"` (future structured logging)
+	- `$env:JOBMINER_COMPLIANCE_STRICT = "1"` (already defaulting to compliant mode)
+4. Start the API server:
+	```powershell
+	uvicorn scraper.web.server:app --reload --port 8000
+	```
+5. Open the HTML page. Options:
+	- Simple: double‑click `scraper/web/index.html` (will open via `file://`).
+	- Or serve it (optional) with an ad‑hoc static server so relative fetches can be adjusted later if needed.
+6. Fill the form: upload a resume (.pdf / .doc / .docx), enter title, location, distance.
+7. Submit. The workflow:
+	- Browser POSTs multipart form to `http://127.0.0.1:8000/api/prepare`.
+	- Response JSON returns `{ token: <id>, count: <n> }`.
+	- Frontend (to be enhanced) or manual follow‑up: GET `http://127.0.0.1:8000/api/download?token=<id>` to download CSV.
+
+Testing via curl (PowerShell quoting):
+```powershell
+curl -F "resume=@C:/path/to/resume.pdf" -F "title=Data Engineer" -F "location=New York, NY" -F "distance=25" http://127.0.0.1:8000/api/prepare
+```
+Then:
+```powershell
+curl -o jobs.csv "http://127.0.0.1:8000/api/download?token=<token_from_previous_step>"
+```
+
+### 11.2 Online / GitHub Pages Considerations
+GitHub Pages can host only static assets (no Python backend). Since scoring and the Adzuna API call occur server-side, a pure Pages deployment cannot provide full functionality. You have two practical hosted options:
+
+Option A: Static Frontend on GitHub Pages + Remote API
+- Host only the HTML/JS (e.g., copy `scraper/web/index.html` into a `docs/` directory and enable Pages on `main`).
+- Deploy the FastAPI service separately (e.g., Fly.io, Render, Railway, Azure Web App, or a small VM) with environment variables set.
+- Adjust the form/JS to POST to your deployed API base URL (e.g., `https://your-app.fly.dev/api/prepare`).
+
+Option B: All-in-one on a PaaS
+- Skip GitHub Pages; directly deploy the FastAPI app (and add a small Jinja or static mount to serve the HTML) to a platform that supports Python.
+
+Why Pages Alone Is Insufficient:
+- No secure place for API keys (they would be exposed client-side).
+- Resume parsing & scoring logic (Python) cannot run in a static environment.
+- Rate limiting / token issuance requires server memory/state.
+
+### 11.3 Suggested Minimal Hosted Deployment (Example: Fly.io)
+High-level (not executed automatically here):
+1. Create a `Dockerfile` (future task) that installs dependencies and launches `uvicorn`.
+2. `fly launch` (accept defaults, create app).
+3. Set secrets: `fly secrets set ADZUNA_APP_ID=... ADZUNA_APP_KEY=...`.
+4. Deploy: `fly deploy`.
+5. Update frontend HTML `fetch` target to the deployed hostname.
+
+### 11.4 Security & Privacy Notes
+- Never commit your Adzuna keys; use environment variables or platform secrets.
+- Uploaded resumes are processed in-memory and temp files; consider adding automated deletion policies for production.
+- Add HTTPS (platform-managed TLS) for any remote deployment; do not send resumes over plain HTTP.
+
+### 11.5 Future Enhancements (Web Layer)
+- Replace static HTML with a small JS module that: submits form via `fetch`, polls for token readiness (if async jobs added), auto-triggers download, and displays job count + basic summary.
+- Add component scores (skill vs semantic) to CSV and optionally show top 5 matched skills per job in UI.
+- Integrate simple front-end validation & error message banner (429 rate limit, 502 upstream error, etc.).
+
+### 11.6 Quick Checklist (Local)
+- [ ] Virtual env created & activated
+- [ ] Dependencies installed
+- [ ] `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` set
+- [ ] Uvicorn running on :8000
+- [ ] Resume file ready (<5MB, supported extension)
+- [ ] Form submitted and token received
+- [ ] CSV downloaded successfully
+

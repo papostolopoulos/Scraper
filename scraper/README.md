@@ -583,3 +583,87 @@ Add a delay or random sleep inside the command if you want to stagger collection
 
 ## Disclaimer
 Use responsibly and respect site policies.
+
+## Web UI (MVP) Quickstart
+This repository now includes a minimal web workflow to upload a resume, search Adzuna for jobs, score them, and download a ranked CSV (≤100 rows).
+
+### GitHub Pages Hosting Note
+If you enabled GitHub Pages for this repository (e.g. https://papostolopoulos.github.io/Scraper/) the `index.html` in the repo root is a static client only. It cannot perform scoring; it sends requests to a running FastAPI backend. You must either:
+1. Run `uvicorn scraper.web.server:app --port 8000` locally (default assumed base `http://127.0.0.1:8000`), or
+2. Deploy the FastAPI backend elsewhere and enter that URL in the API Base override field on the page.
+
+The page persists your chosen API base in `localStorage` under `JOBMINER_API_BASE`.
+
+### 1. Environment Setup (PowerShell)
+```powershell
+python -m venv .venv
+. .venv\Scripts\Activate.ps1
+pip install -e .
+```
+
+### 2. Configure Adzuna Credentials
+Obtain an app id/key from Adzuna and set them (per session):
+```powershell
+$env:ADZUNA_APP_ID = "<your_app_id>"
+$env:ADZUNA_APP_KEY = "<your_app_key>"
+```
+
+### 3. Run the API Server
+```powershell
+uvicorn scraper.web.server:app --reload --port 8000
+```
+Server endpoints:
+- POST `/api/prepare` – accepts multipart form (resume file + fields)
+- GET  `/api/download?token=...` – returns CSV for issued token
+- GET  `/health` – basic status (tokens, rate usage)
+
+### 4. Open the Form
+Open `scraper/web/index.html` in your browser (double‑click works). Fill in:
+- Resume file (.pdf / .doc / .docx, ≤5MB)
+- Title (e.g., Data Engineer)
+- Location (e.g., New York, NY)
+- Distance (miles, 0–250)
+
+Submit – a JSON response returns `{ "token": "<id>", "count": N }`.
+
+### 5. Download Results
+Use the token to fetch the CSV:
+```powershell
+curl -o jobs.csv "http://127.0.0.1:8000/api/download?token=<token>"
+```
+
+### 6. Direct Curl (Skip HTML)
+```powershell
+curl -F "resume=@C:/path/to/resume.pdf" -F "title=Data Engineer" -F "location=New York, NY" -F "distance=25" http://127.0.0.1:8000/api/prepare
+```
+
+### 7. Error Codes
+- 400: Validation (missing / bad distance / unsupported file / size >5MB)
+- 401: Adzuna auth failure
+- 429: Local rate limit (12 prepare calls / 60s) or upstream 429
+- 502: Upstream Adzuna error (server or invalid JSON)
+- 503: Network issue contacting Adzuna
+- 404 (download): Token expired or unknown
+
+### 8. Token Lifecycle
+Download tokens expire after ~10 minutes or when memory prunes older entries.
+
+### 9. Deployment Notes
+GitHub Pages alone cannot host the backend. To go online:
+1. Deploy FastAPI (Fly.io / Render / Railway / Azure). Set secrets.
+2. Host or modify the static `index.html` to point `fetch`/form action at your deployed base URL.
+3. Enforce HTTPS; never expose credentials client-side.
+
+### 10. Future Enhancements
+- Front-end auto download + progress indicator
+- Component score columns (semantic vs skill)
+- Fallback provider & multi-source merge
+- Better per-IP rate limiting & structured logging output
+
+Quick checklist:
+- [ ] Virtualenv active
+- [ ] Dependencies installed
+- [ ] ADZUNA creds set
+- [ ] Uvicorn running
+- [ ] Resume uploaded & token received
+- [ ] CSV downloaded

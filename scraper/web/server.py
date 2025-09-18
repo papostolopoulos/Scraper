@@ -1,5 +1,6 @@
 from __future__ import annotations
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -14,10 +15,33 @@ import re
 from scraper.jobminer.db import JobDB
 from scraper.jobminer.pipeline import score_all
 from scraper.jobminer.sources.base import normalize_ids
-from scraper.jobminer.sources.adzuna_source import AdzunaSource
+from scraper.jobminer.sources.adzuna_source import (
+    AdzunaSource,
+    AdzunaAuthError,
+    AdzunaRateLimitError,
+    AdzunaHTTPError,
+    AdzunaNetworkError,
+)
+from scraper.jobminer.sources.remotive_source import RemotiveSource
 from scraper.jobminer.exporter import Exporter
 
 app = FastAPI(title="Job Miner Web MVP")
+
+# Allow cross-origin requests from GitHub Pages (static hosting) and localhost
+PAGES_ORIGIN = "https://papostolopoulos.github.io"
+origins = [
+    PAGES_ORIGIN,
+    f"{PAGES_ORIGIN}/Scraper",
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 TMP_DIR = Path("scraper/web/tmp")
 TMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -25,10 +49,14 @@ TMP_DIR.mkdir(parents=True, exist_ok=True)
 # In-memory registry mapping token -> {data: bytes, created: datetime}
 TOKENS: dict[str, dict] = {}
 
-# Simple in-memory rate limiting (global)
+# Simple in-memory rate limiting (global prepare endpoint)
 LAST_CALLS: list[datetime] = []
 RATE_LIMIT_WINDOW = 60  # seconds
 RATE_LIMIT_MAX = 12     # max prepare calls per window
+
+# Per-IP download daily counters
+DOWNLOAD_COUNTS: dict[str, dict] = {}
+MAX_DOWNLOADS_PER_DAY = 3
 
 TOKEN_TTL = timedelta(minutes=10)
 
@@ -48,6 +76,17 @@ def _rate_limited():
         return True
     LAST_CALLS.append(now)
     return False
+
+def _check_download_limit(ip: str) -> bool:
+    today = datetime.now(timezone.utc).date().isoformat()
+    rec = DOWNLOAD_COUNTS.get(ip)
+    if not rec or rec.get('day') != today:
+        rec = {'day': today, 'count': 0}
+        DOWNLOAD_COUNTS[ip] = rec
+    if rec['count'] >= MAX_DOWNLOADS_PER_DAY:
+        return False
+    rec['count'] += 1
+    return True
 
 @app.get("/")
 def root() -> HTMLResponse:
@@ -140,9 +179,27 @@ async def prepare(
 
         try:
             jobs = src.fetch()
+        except AdzunaAuthError as e:
+            raise HTTPException(status_code=401, detail=str(e))
+        except AdzunaRateLimitError as e:
+            raise HTTPException(status_code=429, detail=str(e))
+        except AdzunaNetworkError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        except AdzunaHTTPError as e:
+            raise HTTPException(status_code=502, detail=f"{e.message} (status {e.status})")
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Adzuna source error: {e}")
+            raise HTTPException(status_code=500, detail=f"Unexpected Adzuna error: {e}")
         jobs = normalize_ids(jobs, src.name)
+        # Fallback provider if Adzuna returned zero jobs (optional toggle)
+        fb_enabled = os.getenv('JOBMINER_FALLBACK_ENABLED','1').lower() in ('1','true','yes','on')
+        if fb_enabled and len(jobs) == 0:
+            try:
+                remotive = RemotiveSource(what=title)
+                fb_jobs = remotive.fetch()
+                if fb_jobs:
+                    jobs.extend(normalize_ids(fb_jobs, remotive.name))
+            except Exception:
+                pass
         # Optional client-side filtering for work_mode hints (best-effort)
         if work_mode and work_mode.lower() in ("remote", "hybrid", "onsite"):
             wm = work_mode.lower()
@@ -210,12 +267,16 @@ async def prepare(
     return JSONResponse({"token": token, "count": len(out_rows), "empty": len(out_rows)==0})
 
 @app.get("/api/download")
-async def download(token: str):
+async def download(token: str, request: Request):
     _prune_tokens()
     entry = TOKENS.get(token)
     blob = entry['data'] if entry else None
     if not blob:
         raise HTTPException(status_code=404, detail="Not found or expired")
+    # Per-IP daily limit
+    ip = request.client.host if request.client else 'unknown'
+    if not _check_download_limit(ip):
+        raise HTTPException(status_code=429, detail="Daily download limit reached (3)")
     filename = f"job_results_{token[:8]}.csv"
     return StreamingResponse(io.BytesIO(blob), media_type="text/csv", headers={
         "Content-Disposition": f"attachment; filename={filename}"
@@ -224,7 +285,7 @@ async def download(token: str):
 @app.get("/health")
 def health():
     _prune_tokens()
-    return {"status":"ok","tokens_active": len(TOKENS), "rate_window": RATE_LIMIT_WINDOW, "rate_used": len(LAST_CALLS)}
+    return {"status":"ok","tokens_active": len(TOKENS), "rate_window": RATE_LIMIT_WINDOW, "rate_used": len(LAST_CALLS), "download_ips": len(DOWNLOAD_COUNTS)}
 
 if __name__ == "__main__":
     import uvicorn

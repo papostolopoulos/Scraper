@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Job Miner – Web MVP</title>
+  <style>
+    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin:24px; }
+    .container { max-width: 960px; margin:0 auto; }
+    h1 { margin:0 0 16px; }
+    form { display:grid; grid-template-columns:1fr 1fr; gap:12px 16px; }
+    .full { grid-column:1 / -1; }
+    label { font-size:12px; color:#444; display:block; margin-bottom:4px; }
+    input[type=text],input[type=number],input[type=file],select { width:100%; padding:8px; border:1px solid #ccc; border-radius:6px; }
+    .inline { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .actions { margin-top:16px; display:flex; gap:12px; }
+    button { background:#3b82f6; color:#fff; border:none; border-radius:6px; padding:10px 14px; cursor:pointer; }
+    button[disabled] { background:#9ca3af; cursor:not-allowed; }
+    #msg { font-size:13px; }
+    .hint { font-size:12px; color:#555; margin-bottom:20px; }
+    footer { margin-top:40px; font-size:11px; color:#666; }
+    .env-note { background:#fef3c7; padding:8px 12px; border:1px solid #fcd34d; border-radius:6px; font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Job Miner – Web MVP</h1>
+    <p class="hint">Upload your resume and enter search criteria. The backend scores results against extracted skills and returns a ranked CSV (≤100 roles).</p>
+    <div class="env-note">If this page is served from GitHub Pages the API must run locally or on a deployed host. Set <code>JOBMINER_API_BASE</code> below if auto-detection fails.</div>
+
+    <form id="job-form">
+      <div class="full">
+        <label for="api_base">API Base (optional override)</label>
+        <input type="text" id="api_base" placeholder="http://127.0.0.1:8000" />
+      </div>
+      <div class="full">
+        <label for="resume">Resume (PDF/DOCX)</label>
+        <input type="file" id="resume" name="resume" accept=".pdf,.doc,.docx" required />
+      </div>
+      <div>
+        <label for="title">Job title (required)</label>
+        <input type="text" id="title" name="title" placeholder="Data Engineer" required />
+      </div>
+      <div>
+        <label for="location">Location (required)</label>
+        <input type="text" id="location" name="location" placeholder="New York, NY" required />
+      </div>
+      <div>
+        <label for="distance">Distance (miles)</label>
+        <input type="number" id="distance" name="distance" min="1" max="250" value="25" required />
+      </div>
+      <div>
+        <label for="date_posted">Date posted</label>
+        <select id="date_posted" name="date_posted">
+          <option value="">Any</option>
+          <option value="1">Last 24h</option>
+          <option value="3">Last 3 days</option>
+          <option value="7">Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
+      </div>
+      <div>
+        <label for="work_mode">Work mode</label>
+        <select id="work_mode" name="work_mode">
+          <option value="">Any</option>
+          <option value="onsite">On-site</option>
+            <option value="hybrid">Hybrid</option>
+          <option value="remote">Remote</option>
+        </select>
+      </div>
+      <div>
+        <label for="employment_type">Employment type</label>
+        <select id="employment_type" name="employment_type">
+          <option value="">Any</option>
+          <option value="full_time">Full-time</option>
+          <option value="part_time">Part-time</option>
+          <option value="contract">Contract</option>
+          <option value="temporary">Temporary</option>
+          <option value="internship">Internship</option>
+        </select>
+      </div>
+      <div>
+        <label for="salary">Salary expectation (annual)</label>
+        <input type="number" id="salary" name="salary" min="0" step="1000" />
+      </div>
+      <div class="full">
+        <label>Benefits</label>
+        <div class="inline">
+          <label><input type="radio" name="benefits" value="" checked /> Any</label>
+          <label><input type="radio" name="benefits" value="healthcare" /> Healthcare</label>
+          <label><input type="radio" name="benefits" value="pension" /> Pension</label>
+          <label><input type="radio" name="benefits" value="bonus" /> Bonus</label>
+        </div>
+      </div>
+      <div class="full actions">
+        <button type="submit" id="runBtn">Search & Prepare</button>
+        <button type="button" id="downloadBtn" disabled>Download CSV</button>
+      </div>
+      <div class="full"><div id="msg"></div></div>
+    </form>
+
+    <footer>
+      <p>Remember: The API must run locally (uvicorn) or be deployed (e.g. https://your-app.fly.dev). This static page cannot parse resumes or score jobs by itself.</p>
+    </footer>
+  </div>
+
+<script>
+(function(){
+  const form = document.getElementById('job-form');
+  const runBtn = document.getElementById('runBtn');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const msg = document.getElementById('msg');
+  const apiBaseInput = document.getElementById('api_base');
+  let lastToken = null;
+
+  // Attempt auto base: if served from GitHub Pages assume localhost backend unless overridden
+  const defaultBase = 'http://127.0.0.1:8000';
+  apiBaseInput.value = localStorage.getItem('JOBMINER_API_BASE') || defaultBase;
+
+  function apiBase() {
+    const v = apiBaseInput.value.trim() || defaultBase;
+    localStorage.setItem('JOBMINER_API_BASE', v);
+    return v.replace(/\/$/, '');
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    msg.textContent = '';
+    downloadBtn.disabled = true;
+
+    const fd = new FormData(form);
+    ['title','location','distance'].forEach(f=>{ if(!fd.get(f)) { msg.textContent='Missing required field: '+f; }});
+
+    runBtn.disabled = true; runBtn.textContent = 'Working…';
+    try {
+      const res = await fetch(apiBase() + '/api/prepare', { method: 'POST', body: fd });
+      if(!res.ok){
+        let detail = res.status + ' error';
+        try { const j = await res.json(); if(j && j.detail) detail = j.detail; } catch{}
+        throw new Error(detail);
+      }
+      const data = await res.json();
+      lastToken = data.token;
+      if (data.empty) {
+        msg.textContent = 'No jobs found (primary + fallback).';
+      } else {
+        msg.textContent = `Prepared ${data.count} jobs. Ready to download.`;
+        downloadBtn.disabled = false;
+      }
+    } catch(err){
+      console.error(err);
+      msg.textContent = 'Failed: ' + err.message;
+    } finally {
+      runBtn.disabled = false; runBtn.textContent = 'Search & Prepare';
+    }
+  });
+
+  downloadBtn.addEventListener('click', () => {
+    if(!lastToken) return;
+    window.location.href = apiBase() + '/api/download?token=' + encodeURIComponent(lastToken);
+  });
+})();
+</script>
+</body>
+</html>
