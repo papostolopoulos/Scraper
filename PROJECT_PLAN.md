@@ -1,7 +1,7 @@
 # Job Miner Project Plan
 
 ## 1. Objective & Reliability Criteria
-**Objective:** Build a dependable system that collects job postings, enriches them, compares them to a candidate resume, and produces a ranked, exportable shortlist to support data‑driven job search decisions.
+**Objective (Updated Sep 18, 2025):** Deliver a simple web experience where a user can upload a resume, enter job search criteria, and download a CSV (capped at 100 roles) ranked against their skills. Preserve determinism, transparency, and ToS compliance while focusing on an MVP path to value.
 
 **What Success Looks Like:**
 - You can run one command to collect (or ingest) jobs, score them, and export structured outputs (Excel / CSV) any day with consistent runtime and without manual cleanup.
@@ -41,7 +41,7 @@
 | Slow Test Marking | Labeled long tests so day‑to‑day runs skip them by default. | Keeps most test runs fast. |
 | Test Speedups | Stubbed expensive PDF parsing and reduced waits in tests. | Lower friction running tests often. |
 | Test Timeout Guard | Added a timeout per test to avoid hangs. | Prevents stalled CI pipelines. |
-| Coverage Reporting (XML + HTML) | Collects and publishes code coverage reports. | Shows what code is untested; supports quality tracking. |
+| Coverage Reporting (XML + HTML) | Collects pnd publishes code coverage reports. | Shows what code is untested; supports quality tracking. |
 | Coverage Badge JSON | Generates a badge artifact summarizing coverage %. | Visual progress indicator. |
 | Pre-commit Hooks | Automatic checks (style, type, quick tests) before commits. | Catches issues early; consistent codebase. |
 | Flaky Test Reruns (Local + CI) | Automatic reruns for marked flaky tests only. | Reduces noise while not hiding real failures. |
@@ -86,17 +86,41 @@ I. Optional Stretch Features
 - Resume A/B comparison (two resumes, scoring deltas).
 - Skill gap recommender (top missing skills per cluster of high‑interest jobs).
 
-## 3a. MVP Definition & Priority Order
-**MVP Goal:** Deliver daily ranked exports with transparent scoring explanations and stable core quality signals.
+## 3a. MVP Definition & Priority Order (Re-scoped for Web UI)
+**MVP Goal:** A local web page (can reuse/extend the existing Job Miner page) that lets a user:
+- Upload a resume (PDF/DOCX); resume is parsed to extract skills/keywords.
+- Enter search inputs: Job title (required), Location (required), Distance from location (required), Date posted (optional), Work mode (optional), Employment type (optional), Salary expectation (optional), Benefits (optional via radio buttons).
+- Run a compliant search (API-based or local adapters), score results against the resume skills, and download a CSV with up to 100 positions.
 
-**MVP Must-Haves (in execution order):**
-1. Weighting config + validation
-2. Per-job explanation export
-3. Outcome tracking CLI + funnel metrics
-4. Historical run log + anomaly warning (avg score / extraction rate)
-5. Quickstart documentation
+Notes on compliance: Automated scraping of LinkedIn search results violates LinkedIn’s Terms of Service. For the MVP, prioritize compliant data sources (e.g., API partners such as Adzuna, Jora, Jooble, or SERP providers that are ToS-compliant). If LinkedIn is required later, gate it behind an explicit compliance flag and require manual sign-in/session with clear user consent—still risky and not recommended for automated collection.
 
-**Post-MVP (High Value Next):** Semantic enrichment toggle, dedupe refinement, parallel extraction.
+**MVP Must-Haves (execution order):**
+1. Minimal web UI form
+	- Single HTML page served locally with: file upload for resume; inputs for Job title (required), Location (required), Distance (required); optional fields for Date posted, Work mode, Employment type, Salary, Benefits (radio).
+	- Basic client-side validation for required fields.
+2. Resume parsing and skills extraction
+	- Reuse existing resume parser and skill extraction; return a normalized skill list.
+3. Compliant job source adapter
+	- Integrate one API-based job source (configurable keys); map filters (title, location, distance, date posted, work mode/remote, employment type, salary).
+	- Normalize fields into our internal job schema.
+4. Scoring + limit + dedupe
+	- Reuse scoring; cap results to 100; remove near-duplicates (by title/company/location similarity).
+5. CSV export and download
+	- Provide a "Download results" button that streams the CSV to the browser.
+6. Operational guardrails
+	- ToS compliance flag; clear error messages and input validation; simple logging.
+7. Quickstart
+	- README section: how to run locally; where to configure API keys; how to use the page end-to-end.
+
+**Post-MVP (High Value Next):**
+- Multiple sources with fallback/merge; richer filters; improved ranking signals.
+- Saved configuration presets.
+- UI polish and accessibility.
+- Optional: gated LinkedIn session-based fetcher (manual login; compliance flag) — de-prioritized.
+
+**Stretch Goals:**
+- User accounts (email + password) to store uploaded resume for faster analysis next time.
+- Daily email digests of new jobs per user — requires a persistent DB, background scheduler/worker, and email infrastructure.
 
 ## 3b. Progress Tracking (Est vs Actual)
 | Task | Category | Est Hours | Actual Hours | Status | Notes |
@@ -137,7 +161,7 @@ For each completed task: `variance = (Actual - Est) / Est`. If variance > +40% t
 
 ## 3e. Focus Guardrails
 - Never start more than 2 in-progress tasks simultaneously (limit WIP).
-- MVP tasks trump new feature requests until all MVP rows show Status = Done.
+- MVP tasks (Web UI + compliant search + CSV download) trump other features until MVP is done.
 - Stretch features cannot begin before Milestone 2 complete unless explicitly re-prioritized.
 
 ## 4. Timeline of Completed Work (Approximate Sequence)
@@ -229,6 +253,7 @@ DoD:
 |------|--------|-----------|
 | Overfitting scoring weights | Skewed rankings | Validation + explanation exports + configurable weights. |
 | Scraping instability | Data gaps | Login detection + optional manual import path. |
+| LinkedIn ToS violations | Legal/Account risk | Prefer API-based sources; gate any LinkedIn automation behind explicit compliance flags and manual session; avoid by default. |
 | Cache corruption | Inaccurate scores | Hash/version guard + tests + trim policy. |
 | Test suite slowdown | Developer friction | Slow markers, fast scripts, selective reruns. |
 | Silent schema drift | Runtime errors later | Version table + migration tests. |
@@ -259,7 +284,7 @@ Prepared: (Generated automatically)
 
 <!-- NEXT_STEP_START -->
 ### Suggested Next Step
-Polish the dashboard UX and release hygiene: add legends/tooltips to charts and a "latest highlights" card; finalize 1.0.0 release notes and tag.
+Build the MVP web flow: serve a minimal HTML form (resume upload + required search fields), wire a compliant job source adapter, and return a downloadable CSV (max 100). Document local run steps and API key config.
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.

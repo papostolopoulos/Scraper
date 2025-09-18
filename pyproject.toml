@@ -12,6 +12,10 @@ dependencies = [
 	"rapidfuzz>=3.0",
 	"playwright>=1.44",
 	"sentence-transformers>=2.6; python_version>='3.11'",  # optional semantic
+	"fastapi>=0.115",
+	"uvicorn[standard]>=0.30",
+	"httpx>=0.27",
+	"pypdf>=4.2",
 ]
 
 [project.optional-dependencies]

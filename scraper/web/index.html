@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Job Miner – MVP</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    .container { max-width: 960px; margin: 0 auto; }
+    h1 { margin: 0 0 16px; }
+    form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+    .full { grid-column: 1 / -1; }
+    label { font-size: 12px; color: #444; display: block; margin-bottom: 4px; }
+    input[type="text"], input[type="number"], input[type="file"], select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; }
+    .inline { display: flex; gap: 12px; align-items: center; }
+    .hint { font-size: 12px; color: #666; }
+    .actions { margin-top: 16px; display: flex; gap: 12px; }
+    button { background: #3b82f6; color: #fff; border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; }
+    button[disabled] { background: #9ca3af; cursor: not-allowed; }
+    #result { margin-top: 20px; }
+    #msg { font-size: 13px; color: #333; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Job Miner – MVP</h1>
+    <p class="hint">Upload your resume and enter search criteria. We’ll parse your resume for skills, search a compliant source, score the results, and let you download a CSV (max 100 roles).</p>
+
+    <form id="job-form">
+      <div class="full">
+        <label for="resume">Resume (PDF/DOCX)</label>
+        <input type="file" id="resume" name="resume" accept=".pdf,.doc,.docx" required />
+      </div>
+
+      <div>
+        <label for="title">Job title (required)</label>
+        <input type="text" id="title" name="title" placeholder="e.g., Data Analyst" required />
+      </div>
+
+      <div>
+        <label for="location">Location (required)</label>
+        <input type="text" id="location" name="location" placeholder="e.g., London, UK" required />
+      </div>
+
+      <div>
+        <label for="distance">Distance (km, required)</label>
+        <input type="number" id="distance" name="distance" min="1" max="200" step="1" placeholder="25" required />
+      </div>
+
+      <div>
+        <label for="date_posted">Date posted</label>
+        <select id="date_posted" name="date_posted">
+          <option value="">Any time</option>
+          <option value="1">Last 24 hours</option>
+          <option value="3">Last 3 days</option>
+          <option value="7">Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="work_mode">Work mode</label>
+        <select id="work_mode" name="work_mode">
+          <option value="">Any</option>
+          <option value="onsite">On-site</option>
+          <option value="hybrid">Hybrid</option>
+          <option value="remote">Remote</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="employment_type">Employment type</label>
+        <select id="employment_type" name="employment_type">
+          <option value="">Any</option>
+          <option value="full_time">Full-time</option>
+          <option value="part_time">Part-time</option>
+          <option value="contract">Contract</option>
+          <option value="temporary">Temporary</option>
+          <option value="internship">Internship</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="salary">Salary expectation (annual)</label>
+        <input type="number" id="salary" name="salary" min="0" step="1000" placeholder="e.g., 50000" />
+      </div>
+
+      <div class="full">
+        <label>Benefits</label>
+        <div class="inline">
+          <label><input type="radio" name="benefits" value="" checked /> Any</label>
+          <label><input type="radio" name="benefits" value="healthcare" /> Healthcare</label>
+          <label><input type="radio" name="benefits" value="pension" /> Pension</label>
+          <label><input type="radio" name="benefits" value="bonus" /> Bonus</label>
+        </div>
+      </div>
+
+      <div class="full actions">
+        <button type="submit" id="runBtn">Search and Prepare CSV</button>
+        <button type="button" id="downloadBtn" disabled>Download CSV</button>
+      </div>
+
+      <div class="full" id="result">
+        <div id="msg"></div>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    const form = document.getElementById('job-form');
+    const runBtn = document.getElementById('runBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const msg = document.getElementById('msg');
+
+    let lastToken = null; // token/id for server-side prepared CSV
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      msg.textContent = '';
+      downloadBtn.disabled = true;
+
+      const fd = new FormData(form);
+      // Simple client validation of required fields
+      const title = fd.get('title');
+      const location = fd.get('location');
+      const distance = fd.get('distance');
+      if (!title || !location || !distance) {
+        msg.textContent = 'Please fill in Job title, Location, and Distance.';
+        return;
+      }
+
+      runBtn.disabled = true; runBtn.textContent = 'Working…';
+      try {
+        const res = await fetch('/api/prepare', { method: 'POST', body: fd });
+        if (!res.ok) throw new Error('Request failed');
+        const data = await res.json();
+        lastToken = data && data.token;
+        if (lastToken) {
+          msg.textContent = 'Results prepared. You can now download the CSV.';
+          downloadBtn.disabled = false;
+        } else {
+          msg.textContent = 'No results found.';
+        }
+      } catch (err) {
+        console.error(err);
+        msg.textContent = 'There was an error preparing results.';
+      } finally {
+        runBtn.disabled = false; runBtn.textContent = 'Search and Prepare CSV';
+      }
+    });
+
+    downloadBtn.addEventListener('click', async () => {
+      if (!lastToken) return;
+      window.location.href = `/api/download?token=${encodeURIComponent(lastToken)}`;
+    });
+  </script>
+</body>
+</html>
