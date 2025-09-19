@@ -136,6 +136,10 @@
         return;
       }
     }
+    // Remove optional numeric fields if blank so FastAPI doesn't try to coerce empty string to int
+    if(fd.has('salary') && (fd.get('salary') === '' || fd.get('salary') === null)) {
+      fd.delete('salary');
+    }
 
     runBtn.disabled = true; runBtn.textContent = 'Working…';
     try {
