@@ -128,19 +128,37 @@
     e.preventDefault();
     msg.textContent = '';
     downloadBtn.disabled = true;
-
     const fd = new FormData(form);
-    ['title','location','distance'].forEach(f=>{ if(!fd.get(f)) { msg.textContent='Missing required field: '+f; }});
+    // Enforce required fields client-side & abort early instead of letting FastAPI 422
+    for (const f of ['title','location','distance']) {
+      if(!fd.get(f)) {
+        msg.textContent = 'Missing required field: ' + f;
+        return;
+      }
+    }
 
     runBtn.disabled = true; runBtn.textContent = 'Working…';
     try {
       const res = await fetch(apiBase() + '/api/prepare', { method: 'POST', body: fd });
       if(!res.ok){
         let detail = res.status + ' error';
-        try { const j = await res.json(); if(j && j.detail) detail = j.detail; } catch{}
+        try {
+          const j = await res.json();
+          if (j) {
+            if (typeof j.detail === 'string') detail = j.detail;
+            else if (Array.isArray(j.detail)) {
+              // FastAPI validation errors array
+              detail = j.detail.map(d => d.loc ? `${d.loc.join('.')}: ${d.msg}` : (d.msg || JSON.stringify(d))).join('; ');
+            }
+          }
+        } catch(errJSON) {
+          // keep existing detail
+        }
         throw new Error(detail);
       }
-      const data = await res.json();
+      let data;
+      try { data = await res.json(); }
+      catch(parseErr){ throw new Error('Invalid JSON response'); }
       lastToken = data.token;
       if (data.empty) {
         msg.textContent = 'No jobs found (primary + fallback).';
@@ -149,8 +167,12 @@
         downloadBtn.disabled = false;
       }
     } catch(err){
-      console.error(err);
-      msg.textContent = 'Failed: ' + err.message;
+      console.error('Prepare failed', err);
+      if (err && err.message) {
+        msg.textContent = 'Failed: ' + err.message;
+      } else {
+        msg.textContent = 'Failed (unknown error)';
+      }
     } finally {
       runBtn.disabled = false; runBtn.textContent = 'Search & Prepare';
     }
