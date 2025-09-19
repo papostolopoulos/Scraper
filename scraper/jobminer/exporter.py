@@ -13,7 +13,7 @@ from typing import Dict, Any, Iterable, Optional
 # Updated export columns for jobs_full (removed offered_salary_currency, added component scores & matched_skills)
 EXPORT_COLUMNS = [
     'job_id','title','company_name','company_name_normalized','location','location_normalized','work_mode','posted_at','employment_type','seniority_level',
-    'offered_salary_min','offered_salary_max','offered_salary_currency','offered_salary_min_usd','offered_salary_max_usd','benefits','benefits_normalized',
+    'offered_salary_min','offered_salary_max','offered_salary_currency','salary_period','salary_is_predicted','offered_salary_min_usd','offered_salary_max_usd','benefits','benefits_normalized',
     'skill_score','semantic_score','score_total','matched_skills','status','apply_url','geocode_lat','geocode_lon'
 ]
 
@@ -143,7 +143,8 @@ class Exporter:
             root = self.export_dir.parent.parent
             self._comp_cfg = load_comp_config(root)
             self._benefit_map = load_benefit_mappings(root)
-        min_usd, max_usd = convert_salary(j.offered_salary_min, j.offered_salary_max, getattr(j, 'offered_salary_currency', None), 'yearly', self._comp_cfg)
+    salary_period = getattr(j, 'salary_period', None) or 'yearly'
+    min_usd, max_usd = convert_salary(j.offered_salary_min, j.offered_salary_max, getattr(j, 'offered_salary_currency', None), salary_period, self._comp_cfg)
         benefits_norm = map_benefits(j.benefits, self._benefit_map) if j.benefits else []
         record = {
             'job_id': str(j.job_id) if j.job_id is not None else '',
@@ -159,6 +160,8 @@ class Exporter:
             'offered_salary_min': j.offered_salary_min,
             'offered_salary_max': j.offered_salary_max,
             'offered_salary_currency': getattr(j, 'offered_salary_currency', None),
+            'salary_period': salary_period,
+            'salary_is_predicted': getattr(j, 'salary_is_predicted', None),
             'offered_salary_min_usd': min_usd,
             'offered_salary_max_usd': max_usd,
             'benefits': ", ".join(j.benefits) if j.benefits else None,
@@ -180,7 +183,8 @@ class Exporter:
             if self.redact is not None:
                 self._redaction_cfg['enabled'] = self.redact
         if self._redaction_cfg.get('enabled'):
-            redact_fields(record, ['title','company_name','location','matched_skills','apply_url'], self._redaction_cfg)
+            # Do not redact apply_url for usability in CSV; retain other redactions
+            redact_fields(record, ['title','company_name','location','matched_skills'], self._redaction_cfg)
         return record
 
     def _rationale_row(self, j, br, sm, weights_data, matching_data):

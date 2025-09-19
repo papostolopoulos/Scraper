@@ -34,6 +34,8 @@ class JobPosting(BaseModel):
     offered_salary_min: Optional[float] = None  # in annual USD equivalent if convertible
     offered_salary_max: Optional[float] = None
     offered_salary_currency: Optional[str] = None
+    salary_period: Optional[str] = None  # yearly | monthly | day | hour (raw from source if available)
+    salary_is_predicted: Optional[bool] = None  # True if provider marks salary as predicted / estimated
     benefits: List[str] = Field(default_factory=list)  # normalized benefit keywords
     score_total: Optional[float] = None
     score_breakdown: Optional[Dict[str, float]] = None

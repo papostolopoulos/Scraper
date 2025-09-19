@@ -87,12 +87,13 @@
       </div>
 
       <div class="full">
-        <label>Benefits</label>
-        <div class="inline">
-          <label><input type="radio" name="benefits" value="" checked /> Any</label>
-          <label><input type="radio" name="benefits" value="healthcare" /> Healthcare</label>
-          <label><input type="radio" name="benefits" value="pension" /> Pension</label>
-          <label><input type="radio" name="benefits" value="bonus" /> Bonus</label>
+        <label for="benefits_box">Benefits (ANY of selected)</label>
+        <div class="inline" id="benefits_box" style="flex-wrap:wrap;">
+          <label><input type="checkbox" name="benefits_multi" value="healthcare" /> Healthcare</label>
+          <label><input type="checkbox" name="benefits_multi" value="pension" /> Pension</label>
+          <label><input type="checkbox" name="benefits_multi" value="bonus" /> Bonus</label>
+          <label><input type="checkbox" name="benefits_multi" value="dental" /> Dental</label>
+          <label><input type="checkbox" name="benefits_multi" value="vision" /> Vision</label>
         </div>
       </div>
 
@@ -121,6 +122,13 @@
       downloadBtn.disabled = true;
 
       const fd = new FormData(form);
+      // Aggregate multi-select benefits into comma-separated value under 'benefits'
+      const selectedBenefits = [...document.querySelectorAll('input[name="benefits_multi"]:checked')].map(cb => cb.value);
+      // Remove existing single benefits field if existed
+      if (fd.has('benefits')) fd.delete('benefits');
+      if (selectedBenefits.length) {
+        fd.append('benefits', selectedBenefits.join(','));
+      }
       // Simple client validation of required fields
       const title = fd.get('title');
       const location = fd.get('location');

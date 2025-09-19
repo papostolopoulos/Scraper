@@ -209,6 +209,16 @@ async def prepare(
             wm = work_mode.lower()
             jobs = [j for j in jobs if (j.work_mode or "").lower() == wm]
 
+        # Benefits ANY filtering if user selected benefits (comma separated in form)
+        if benefits:
+            requested_benefits = {b.strip().lower() for b in benefits.split(',') if b.strip()}
+            if requested_benefits:
+                def job_has_any(j):
+                    jb = set((j.benefits or []))
+                    jb_lower = {x.lower() for x in jb}
+                    return bool(jb_lower & requested_benefits)
+                jobs = [j for j in jobs if job_has_any(j)]
+
         # Upsert into DB and run scoring using the detected resume profile
         db.upsert_jobs(jobs)
 
@@ -245,17 +255,26 @@ async def prepare(
                 out_rows.append(row)
                 if i + 1 >= 100:
                     break
-        # Re-write a compact CSV with only essential columns for download speed
+        # Re-write a compact CSV with enriched columns for download (component scores, salaries, top skills)
         slim_cols = [
             'title','company_name','location','work_mode','employment_type','posted_at',
-            'offered_salary_min','offered_salary_max','score_total','matched_skills','apply_url'
+            'offered_salary_min','offered_salary_max','offered_salary_currency','salary_period','salary_is_predicted',
+            'offered_salary_min_usd','offered_salary_max_usd','skill_score','semantic_score','score_total','matched_skills','apply_url','top_skills'
         ]
         if out_rows:
             buf = io.StringIO()
             writer = csv.DictWriter(buf, fieldnames=slim_cols)
             writer.writeheader()
             for r in out_rows:
-                writer.writerow({k: r.get(k) for k in slim_cols})
+                row = {k: r.get(k) for k in slim_cols}
+                # Derive top_skills: use first 5 matched_skills tokens
+                if not row.get('top_skills'):
+                    ms = r.get('matched_skills') or ''
+                    if ms:
+                        parts = [p.strip() for p in ms.split(',') if p.strip()][:5]
+                        if parts:
+                            row['top_skills'] = ", ".join(parts)
+                writer.writerow(row)
             data = buf.getvalue().encode('utf-8')
         else:
             data = b"title\n"  # empty placeholder

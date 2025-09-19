@@ -139,10 +139,23 @@ class AdzunaSource:
                         break
                     for r in results:
                         try:
+                            salary_period = r.get("salary_period") or r.get("contract_time")  # heuristic; Adzuna may not always expose explicit period
+                            salary_is_predicted = r.get("salary_is_predicted")
+                            company_display = (r.get("company", {}) or {}).get("display_name", "")
+                            redirect_url = r.get("redirect_url")
+                            if not company_display and redirect_url:
+                                # Derive a fallback company display name from domain
+                                m = re.search(r"https?://([^/]+)", redirect_url)
+                                if m:
+                                    host = m.group(1)
+                                    host = re.sub(r"^www\.", "", host)
+                                    # take first label before TLD
+                                    label = host.split('.')[-2] if len(host.split('.')) > 1 else host
+                                    company_display = label.replace('-', ' ').title()
                             job = JobPosting(
                                 job_id=str(r.get("id") or r.get("adref") or r.get("redirect_url")),
                                 title=r.get("title") or "",
-                                company_name=(r.get("company", {}) or {}).get("display_name", ""),
+                                company_name=company_display,
                                 location=(r.get("location", {}) or {}).get("display_name"),
                                 work_mode=_infer_work_mode(r.get("title", ""), r.get("description")),
                                 posted_at=_parse_created(r.get("created")),
@@ -151,10 +164,12 @@ class AdzunaSource:
                                 description_raw=r.get("description"),
                                 description_clean=_strip_html(r.get("description")),
                                 apply_method="external",
-                                apply_url=r.get("redirect_url"),
+                                apply_url=redirect_url,
                                 offered_salary_min=r.get("salary_min"),
                                 offered_salary_max=r.get("salary_max"),
                                 offered_salary_currency=(r.get("salary_currency") or ("USD" if self.country.lower()=="us" else None)),
+                                salary_period=salary_period,
+                                salary_is_predicted=bool(salary_is_predicted) if salary_is_predicted is not None else None,
                                 geocode_lat=r.get("latitude"),
                                 geocode_lon=r.get("longitude"),
                             )
