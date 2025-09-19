@@ -1,7 +1,7 @@
 from __future__ import annotations
-from typing import List, Dict
+from typing import List, Dict, Optional
 from datetime import datetime, timezone
-from math import exp
+from math import exp, log
 from .models import JobPosting
 from .weights import load_weights
 
@@ -22,28 +22,59 @@ def get_model():
     return _model
 
 
-def compute_skill_score(job_skills: List[str], resume_skills: List[str], core_limit: int = 12) -> float:
-    """Compute a more discriminative skill score using F1 (precision/recall) against a core subset of resume skills.
+def compute_skill_score(
+    job_skills: List[str],
+    resume_skills: List[str],
+    freq_map: Optional[Dict[str, int]] = None,
+    total_jobs: int = 1,
+    dynamic_core: bool = True,
+) -> Dict[str, float]:
+    """Weighted skill score with IDF-like weighting and adaptive core set.
 
-    - precision = overlap / len(job_skills)
-    - recall    = overlap / len(core_resume)
-    - F1        = 2 * p * r / (p + r)
-
-    core_limit limits dilution when resume has many skills.
-    Returns 0.0 if no overlap.
+    Returns dict containing:
+      score, precision, recall, overlap_count, core_size
     """
     if not job_skills or not resume_skills:
-        return 0.0
-    core_resume = [s.lower() for s in resume_skills[:core_limit]]
+        return {"score": 0.0, "precision": 0.0, "recall": 0.0, "overlap_count": 0, "core_size": 0}
+
+    # Determine core resume subset size adaptively: half the resume skills bounded [8,24]
+    if dynamic_core:
+        core_size = min(24, max(8, int(len(resume_skills) * 0.5)))
+    else:
+        core_size = min(12, len(resume_skills))
+    core_resume = [s.lower() for s in resume_skills[:core_size]]
     job_norm = [s.lower() for s in job_skills]
-    overlap = set(job_norm) & set(core_resume)
-    if not overlap:
-        return 0.0
-    precision = len(overlap) / max(len(job_norm), 1)
-    recall = len(overlap) / max(len(core_resume), 1)
-    f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) else 0.0
-    # Mild smoothing boost to differentiate low counts
-    return round(min(1.0, f1 ** 0.92), 6)
+
+    # Weighting (IDF-like): w = 1 + log(1 + total_jobs/(1+freq(skill)))
+    def weight(skill: str) -> float:
+        if not freq_map:
+            return 1.0 + (len(skill)/40.0)  # light length-based proxy
+        f = freq_map.get(skill.lower(), 0)
+        return 1.0 + log(1 + (total_jobs / (1 + f)))
+
+    overlap_set = set(job_norm) & set(core_resume)
+    if not overlap_set:
+        return {"score": 0.0, "precision": 0.0, "recall": 0.0, "overlap_count": 0, "core_size": core_size}
+
+    job_denom = sum(weight(s) for s in job_norm) or 1.0
+    core_denom = sum(weight(s) for s in core_resume) or 1.0
+    overlap_weight = sum(weight(s) for s in overlap_set)
+    precision = overlap_weight / job_denom
+    recall = overlap_weight / core_denom
+    if (precision + recall) == 0:
+        f1 = 0.0
+    else:
+        f1 = (2 * precision * recall) / (precision + recall)
+    # Small bonus for breadth of overlap relative to core (diminishing)
+    breadth_bonus = min(0.08, 0.08 * (overlap_weight / (0.35 * core_denom)))
+    score = min(1.0, f1 + breadth_bonus)
+    return {
+        "score": round(score, 6),
+        "precision": round(precision, 6),
+        "recall": round(recall, 6),
+        "overlap_count": len(overlap_set),
+        "core_size": core_size,
+    }
 
 
 def compute_semantic_score(job: JobPosting, resume_summary: str) -> float:
@@ -82,7 +113,12 @@ def aggregate_score(job: JobPosting, resume_skills: List[str], resume_summary: s
     if weights is None:
         weights, _ = load_weights()
     now = datetime.now(timezone.utc)
-    skill_score = compute_skill_score(job.skills_extracted, resume_skills)
+    # NOTE: compute_skill_score is now invoked upstream in score_all where frequency map is available.
+    skill_score = job.score_breakdown.get('skill') if job.score_breakdown else None
+    if skill_score is None:
+        # fallback (should not normally happen)
+        tmp = compute_skill_score(job.skills_extracted, resume_skills)
+        skill_score = tmp['score']
     semantic_score = compute_semantic_score(job, resume_summary)
     recency_score = compute_recency_score(job.posted_at, now)
     seniority_penalty = compute_seniority_penalty(job.seniority_level, target_seniority)
@@ -98,13 +134,15 @@ def aggregate_score(job: JobPosting, resume_skills: List[str], resume_summary: s
         weights.get('company', 0)*company_component
     )
 
-    breakdown = {
+    # Preserve existing breakdown entries if pre-populated (skill metrics added earlier)
+    base_breakdown = job.score_breakdown or {}
+    base_breakdown.update({
         'skill': skill_score,
         'semantic': semantic_score,
         'recency': recency_score,
         'seniority_component': 1 - seniority_penalty,
         'company': company_component
-    }
+    })
     job.score_total = round(total, 4)
-    job.score_breakdown = breakdown
+    job.score_breakdown = base_breakdown
     return job

@@ -7,7 +7,7 @@ from .resume import load_or_build_resume_profile
 from .skills import load_seed_skills, extract_skills, extract_resume_overlap_skills
 from .skill_profile_cache import load_skill_entry, save_skill_entry, purge_old, clear_skills_cache, should_clear_env_flag
 from .benefits import extract_benefits
-from .scoring import aggregate_score
+from .scoring import aggregate_score, compute_skill_score
 from .weights import load_weights
 from .history import append_history
 from .anomaly import detect_anomalies
@@ -75,6 +75,12 @@ def score_all(db: JobDB, resume_pdf: Path, seed_skills_path: Path, target_senior
     max_workers = max(1, max_workers)
 
     cache_lock = threading.Lock()
+
+    # Pre-pass: we will collect descriptions to extract skills anyway inside scoring; to integrate IDF weighting we still rely on final extracted sets.
+    # We'll process as before but store skill metrics during processing using a two-phase approach:
+
+    # Frequency map will be filled dynamically; we first extract skills per job then compute weighting.
+    extracted_jobs: list[JobPosting] = []
 
     def process_job(job: JobPosting):
         nonlocal cache_hits, cache_misses
@@ -174,7 +180,8 @@ def score_all(db: JobDB, resume_pdf: Path, seed_skills_path: Path, target_senior
                     logger.info("skills_extracted", extra={'job_id': job.job_id, 'count': len(merged)})
                 else:
                     logger.info("no_skills_found", extra={'job_id': job.job_id, 'desc_len': len(job.description_clean)})
-            aggregate_score(job, profile.skills, profile.summary, weights, target_seniority)
+            # Temporarily skip aggregate_score until we compute global freq map; store job for second pass
+            extracted_jobs.append(job)
             if job.score_total is not None and job.score_total >= thresholds['shortlist'] and job.status == 'new':
                 job.status = 'shortlisted'
             return job
@@ -182,16 +189,39 @@ def score_all(db: JobDB, resume_pdf: Path, seed_skills_path: Path, target_senior
             logger.error("job_process_error", extra={'job_id': job.job_id, 'error': str(e)})
             return job
 
+    # Phase 1: extraction
     if max_workers == 1 or len(jobs) <= 1:
         for j in jobs:
             updated = process_job(j)
             db.update_scores(updated)
     else:
-        # Bound workers to job count
         workers = min(max_workers, len(jobs))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
             for updated in ex.map(process_job, jobs, chunksize=1):
                 db.update_scores(updated)
+
+    # Build frequency map for skill weighting (job-level skill presence)
+    freq_map = {}
+    for j in extracted_jobs:
+        if j.skills_extracted:
+            for s in set(s.lower() for s in j.skills_extracted):
+                freq_map[s] = freq_map.get(s, 0) + 1
+    total_jobs = max(1, len(extracted_jobs))
+
+    # Phase 2: compute weighted scores
+    for j in extracted_jobs:
+        details = compute_skill_score(j.skills_extracted or [], profile.skills, freq_map=freq_map, total_jobs=total_jobs)
+        # Attach debug metrics to breakdown early so aggregate_score can reuse
+        j.score_breakdown = j.score_breakdown or {}
+        j.score_breakdown.update({
+            'skill_precision': details['precision'],
+            'skill_recall': details['recall'],
+            'skill_overlap_count': details['overlap_count'],
+            'skill_core_size': details['core_size'],
+            'skill': details['score'],
+        })
+        aggregate_score(j, profile.skills, profile.summary, weights, target_seniority)
+        db.update_scores(j)
     if use_disk_cache:
         purge_old()
         logger.info("skill_cache_stats", extra={'hits': cache_hits, 'misses': cache_misses})

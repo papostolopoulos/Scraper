@@ -14,7 +14,7 @@ from typing import Dict, Any, Iterable, Optional
 EXPORT_COLUMNS = [
     'job_id','title','company_name','company_name_normalized','location','location_normalized','work_mode','posted_at','employment_type','seniority_level',
     'offered_salary_min','offered_salary_max','offered_salary_currency','salary_period','salary_is_predicted','offered_salary_min_usd','offered_salary_max_usd','benefits','benefits_normalized',
-    'skill_score','semantic_score','score_total','matched_skills','status','apply_url','geocode_lat','geocode_lon'
+    'skill_score','skill_precision','skill_recall','skill_overlap_count','skill_core_size','semantic_score','score_total','matched_skills','status','apply_url','geocode_lat','geocode_lon'
 ]
 
 class Exporter:
@@ -144,6 +144,31 @@ class Exporter:
             self._comp_cfg = load_comp_config(root)
             self._benefit_map = load_benefit_mappings(root)
         salary_period = getattr(j, 'salary_period', None) or 'yearly'
+        # Heuristic salary extraction if missing
+        if j.offered_salary_min is None and j.offered_salary_max is None and j.description_clean:
+            import re
+            # Simple range like 120k - 150k or $120,000 - $150,000
+            pattern = re.compile(r'(\$|£|€)?\s?(\d{2,3}(?:[,\d]{0,3})?(?:k|,?000)?)\s*(?:-|to|–)\s*(\$|£|€)?\s?(\d{2,3}(?:[,\d]{0,3})?(?:k|,?000)?)', re.IGNORECASE)
+            m = pattern.search(j.description_clean)
+            def _norm(v: str) -> int | None:
+                if not v: return None
+                v = v.lower().replace(',', '')
+                mult = 1
+                if v.endswith('k'):
+                    mult = 1000
+                    v = v[:-1]
+                try:
+                    return int(float(v) * mult)
+                except Exception:
+                    return None
+            if m:
+                a = _norm(m.group(2)); b = _norm(m.group(4))
+                if a and b:
+                    j.offered_salary_min, j.offered_salary_max = min(a,b), max(a,b)
+                    if not getattr(j, 'offered_salary_currency', None):
+                        cur_sym = m.group(1) or m.group(3)
+                        cur_map = {'$':'USD','£':'GBP','€':'EUR'}
+                        if cur_sym: j.offered_salary_currency = cur_map.get(cur_sym, None)
         min_usd, max_usd = convert_salary(
             j.offered_salary_min,
             j.offered_salary_max,
@@ -173,6 +198,10 @@ class Exporter:
             'benefits': ", ".join(j.benefits) if j.benefits else None,
             'benefits_normalized': ", ".join(benefits_norm) if benefits_norm else None,
             'skill_score': (j.score_breakdown or {}).get('skill'),
+            'skill_precision': (j.score_breakdown or {}).get('skill_precision'),
+            'skill_recall': (j.score_breakdown or {}).get('skill_recall'),
+            'skill_overlap_count': (j.score_breakdown or {}).get('skill_overlap_count'),
+            'skill_core_size': (j.score_breakdown or {}).get('skill_core_size'),
             'semantic_score': (j.score_breakdown or {}).get('semantic'),
             'score_total': j.score_total,
             'matched_skills': ", ".join(j.skills_extracted) if j.skills_extracted else None,

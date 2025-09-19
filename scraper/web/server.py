@@ -223,7 +223,7 @@ def _process_job(job: JobRun):
         slim_cols = [
             'title','company_name','location','work_mode','employment_type','posted_at',
             'offered_salary_min','offered_salary_max','offered_salary_currency','salary_period','salary_is_predicted',
-            'offered_salary_min_usd','offered_salary_max_usd','skill_score','semantic_score','score_total','matched_skills','apply_url','top_skills'
+            'skill_score','skill_precision','skill_recall','skill_overlap_count','skill_core_size','semantic_score','score_total','matched_skills','apply_url','top_skills'
         ]
         if out_rows:
             buf = io.StringIO(); w = csv.DictWriter(buf, fieldnames=slim_cols); w.writeheader()
@@ -574,7 +574,7 @@ async def prepare(
         slim_cols = [
             'title','company_name','location','work_mode','employment_type','posted_at',
             'offered_salary_min','offered_salary_max','offered_salary_currency','salary_period','salary_is_predicted',
-            'offered_salary_min_usd','offered_salary_max_usd','skill_score','semantic_score','score_total','matched_skills','apply_url','top_skills'
+            'skill_score','skill_precision','skill_recall','skill_overlap_count','skill_core_size','semantic_score','score_total','matched_skills','apply_url','top_skills'
         ]
         if out_rows:
             buf = io.StringIO()
