@@ -147,28 +147,49 @@ class Exporter:
         # Heuristic salary extraction if missing
         if j.offered_salary_min is None and j.offered_salary_max is None and j.description_clean:
             import re
-            # Simple range like 120k - 150k or $120,000 - $150,000
-            pattern = re.compile(r'(\$|£|€)?\s?(\d{2,3}(?:[,\d]{0,3})?(?:k|,?000)?)\s*(?:-|to|–)\s*(\$|£|€)?\s?(\d{2,3}(?:[,\d]{0,3})?(?:k|,?000)?)', re.IGNORECASE)
-            m = pattern.search(j.description_clean)
+            text = j.description_clean
+            # Environment controls
+            require_symbol = (os.getenv('JOBMINER_SALARY_REQUIRE_SYMBOL','1').lower() in ('1','true','yes','on'))
+            min_salary = os.getenv('JOBMINER_SALARY_MIN_YEARLY')
+            try:
+                min_salary = int(min_salary) if min_salary else 70000
+            except Exception:
+                min_salary = 70000
+            # Pattern demands either a currency symbol OR explicit 'k' units to reduce false positives
+            pattern = re.compile(r'(\$|£|€)?\s?(\d{2,3}(?:[,\d]{0,3})?(?:k|,?000)?)\s*(?:-|to|–|—|–)\s*(\$|£|€)?\s?(\d{2,3}(?:[,\d]{0,3})?(?:k|,?000)?)', re.IGNORECASE)
+            candidates = []
             def _norm(v: str) -> int | None:
                 if not v: return None
-                v = v.lower().replace(',', '')
+                v_clean = v.lower().replace(',', '')
                 mult = 1
-                if v.endswith('k'):
+                if v_clean.endswith('k'):
                     mult = 1000
-                    v = v[:-1]
+                    v_clean = v_clean[:-1]
+                # Reject years/phone-like long numbers (e.g., 2024, 18005551234) heuristically
+                if len(v_clean) >= 7 and mult == 1:
+                    return None
                 try:
-                    return int(float(v) * mult)
+                    val = int(float(v_clean) * mult)
+                    return val
                 except Exception:
                     return None
-            if m:
+            for m in pattern.finditer(text[:8000]):  # only scan first 8k chars
                 a = _norm(m.group(2)); b = _norm(m.group(4))
-                if a and b:
-                    j.offered_salary_min, j.offered_salary_max = min(a,b), max(a,b)
-                    if not getattr(j, 'offered_salary_currency', None):
-                        cur_sym = m.group(1) or m.group(3)
-                        cur_map = {'$':'USD','£':'GBP','€':'EUR'}
-                        if cur_sym: j.offered_salary_currency = cur_map.get(cur_sym, None)
+                cur_sym = m.group(1) or m.group(3)
+                # Require symbol if configured
+                if require_symbol and not cur_sym:
+                    continue
+                if a and b and a < b:
+                    if b < min_salary:  # discard ranges below threshold
+                        continue
+                    candidates.append((a,b,cur_sym))
+            if candidates:
+                # Choose smallest upper bound range (often base salary vs huge OTE claims)
+                a,b,sym = sorted(candidates, key=lambda x: x[1])[0]
+                j.offered_salary_min, j.offered_salary_max = a,b
+                if not getattr(j, 'offered_salary_currency', None):
+                    cur_map = {'$':'USD','£':'GBP','€':'EUR'}
+                    if sym: j.offered_salary_currency = cur_map.get(sym, None)
         min_usd, max_usd = convert_salary(
             j.offered_salary_min,
             j.offered_salary_max,
