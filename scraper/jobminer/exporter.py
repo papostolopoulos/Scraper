@@ -143,8 +143,14 @@ class Exporter:
             root = self.export_dir.parent.parent
             self._comp_cfg = load_comp_config(root)
             self._benefit_map = load_benefit_mappings(root)
-    salary_period = getattr(j, 'salary_period', None) or 'yearly'
-    min_usd, max_usd = convert_salary(j.offered_salary_min, j.offered_salary_max, getattr(j, 'offered_salary_currency', None), salary_period, self._comp_cfg)
+        salary_period = getattr(j, 'salary_period', None) or 'yearly'
+        min_usd, max_usd = convert_salary(
+            j.offered_salary_min,
+            j.offered_salary_max,
+            getattr(j, 'offered_salary_currency', None),
+            salary_period,
+            self._comp_cfg,
+        )
         benefits_norm = map_benefits(j.benefits, self._benefit_map) if j.benefits else []
         record = {
             'job_id': str(j.job_id) if j.job_id is not None else '',
