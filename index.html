@@ -94,14 +94,20 @@ miooi<!DOCTYPE html>
         <label for="salary">Salary expectation (annual)</label>
         <input type="number" id="salary" name="salary" min="0" step="1000" />
       </div>
-      <div class="full">
-        <label>Benefits</label>
-        <div class="inline">
-          <label><input type="radio" name="benefits" value="" checked /> Any</label>
-          <label><input type="radio" name="benefits" value="healthcare" /> Healthcare</label>
-          <label><input type="radio" name="benefits" value="pension" /> Pension</label>
-          <label><input type="radio" name="benefits" value="bonus" /> Bonus</label>
-        </div>
+      <div>
+        <label for="limit">Result limit</label>
+        <select id="limit" name="limit">
+          <option value="10">10</option>
+          <option value="20">20</option>
+          <option value="30">30</option>
+          <option value="40">40</option>
+          <option value="50" selected>50</option>
+          <option value="60">60</option>
+          <option value="70">70</option>
+          <option value="80">80</option>
+          <option value="90">90</option>
+          <option value="100">100</option>
+        </select>
       </div>
       <div class="full actions">
         <button type="submit" id="runBtn">Search & Prepare</button>
