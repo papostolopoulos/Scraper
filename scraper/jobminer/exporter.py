@@ -29,7 +29,7 @@ class Exporter:
     EXPLANATION_COLUMNS = [
         'job_id','title','company_name','company_name_normalized','score_total','skill_score','semantic_score',
         'recency_score','seniority_component','matched_skills','base_extracted','resume_overlap','overlap_added',
-        'semantic_added','rationale_text','weights_snapshot','thresholds_snapshot','status','apply_url'
+        'semantic_added','rationale_text','weights_snapshot','thresholds_snapshot','matching_snapshot','status','apply_url'
     ]
 
     def __init__(self, db: JobDB, export_dir: Path, stream: Optional[bool] = None, redact: Optional[bool] = None):

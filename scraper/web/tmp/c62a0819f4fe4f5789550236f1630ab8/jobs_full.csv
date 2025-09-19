@@ -1,0 +1,2 @@
+job_id,title,company_name,company_name_normalized,location,location_normalized,work_mode,posted_at,employment_type,seniority_level,offered_salary_min,offered_salary_max,offered_salary_currency,offered_salary_min_usd,offered_salary_max_usd,benefits,benefits_normalized,skill_score,semantic_score,score_total,matched_skills,status,apply_url,geocode_lat,geocode_lon
+4272854754,Technical Program Manager (Customer Success Manager),Harness,,,,,,,,,,,,,"commuter, equity, fsa, parental leave, rsu",,0.178698,0.697069987654686,0.4515,Salesforce,new,[REDACTED],,
