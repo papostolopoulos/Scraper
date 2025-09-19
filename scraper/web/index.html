@@ -86,15 +86,20 @@
         <input type="number" id="salary" name="salary" min="0" step="1000" placeholder="e.g., 50000" />
       </div>
 
-      <div class="full">
-        <label for="benefits_box">Benefits (ANY of selected)</label>
-        <div class="inline" id="benefits_box" style="flex-wrap:wrap;">
-          <label><input type="checkbox" name="benefits_multi" value="healthcare" /> Healthcare</label>
-          <label><input type="checkbox" name="benefits_multi" value="pension" /> Pension</label>
-          <label><input type="checkbox" name="benefits_multi" value="bonus" /> Bonus</label>
-          <label><input type="checkbox" name="benefits_multi" value="dental" /> Dental</label>
-          <label><input type="checkbox" name="benefits_multi" value="vision" /> Vision</label>
-        </div>
+      <div>
+        <label for="limit">Result limit</label>
+        <select id="limit" name="limit">
+          <option value="10">10</option>
+          <option value="20">20</option>
+          <option value="30">30</option>
+          <option value="40">40</option>
+          <option value="50" selected>50</option>
+          <option value="60">60</option>
+          <option value="70">70</option>
+          <option value="80">80</option>
+          <option value="90">90</option>
+          <option value="100">100</option>
+        </select>
       </div>
 
       <div class="full actions">
@@ -122,13 +127,7 @@
       downloadBtn.disabled = true;
 
       const fd = new FormData(form);
-      // Aggregate multi-select benefits into comma-separated value under 'benefits'
-      const selectedBenefits = [...document.querySelectorAll('input[name="benefits_multi"]:checked')].map(cb => cb.value);
-      // Remove existing single benefits field if existed
-      if (fd.has('benefits')) fd.delete('benefits');
-      if (selectedBenefits.length) {
-        fd.append('benefits', selectedBenefits.join(','));
-      }
+      // No benefits collection (removed UI). Limit is already part of the form.
       // Simple client validation of required fields
       const title = fd.get('title');
       const location = fd.get('location');

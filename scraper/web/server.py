@@ -103,7 +103,7 @@ async def prepare(
     work_mode: str | None = Form(None),
     employment_type: str | None = Form(None),
     salary: int | None = Form(None),
-    benefits: str | None = Form(None),
+    limit: int | None = Form(50),
     country: str | None = Form("us"),
     app_id: str | None = Form(None),
     app_key: str | None = Form(None),
@@ -209,15 +209,17 @@ async def prepare(
             wm = work_mode.lower()
             jobs = [j for j in jobs if (j.work_mode or "").lower() == wm]
 
-        # Benefits ANY filtering if user selected benefits (comma separated in form)
-        if benefits:
-            requested_benefits = {b.strip().lower() for b in benefits.split(',') if b.strip()}
-            if requested_benefits:
-                def job_has_any(j):
-                    jb = set((j.benefits or []))
-                    jb_lower = {x.lower() for x in jb}
-                    return bool(jb_lower & requested_benefits)
-                jobs = [j for j in jobs if job_has_any(j)]
+        # Apply a hard cap early if limit specified (pre-scoring) to reduce latency
+        if limit is not None:
+            try:
+                lim = max(1, min(int(limit), 100))
+            except Exception:
+                lim = 50
+        else:
+            lim = 50
+        # Trim job list before scoring if oversized (keep ordering as fetched)
+        if len(jobs) > lim:
+            jobs = jobs[:lim]
 
         # Upsert into DB and run scoring using the detected resume profile
         db.upsert_jobs(jobs)
@@ -247,13 +249,13 @@ async def prepare(
                 TOKENS[token] = { 'data': data, 'created': datetime.now(timezone.utc) }
                 return JSONResponse({"token": token, "count": 0, "empty": True})
             raise HTTPException(status_code=500, detail="Failed to build CSV after scoring")
-        # Load and cap to 100 rows for the MVP
+        # Load and cap to requested limit (already truncated pre-scoring, but safeguard in case export has more)
         out_rows = []
         with open(full_csv, 'r', encoding='utf-8', newline='') as f:
             reader = csv.DictReader(f)
             for i, row in enumerate(reader):
                 out_rows.append(row)
-                if i + 1 >= 100:
+                if i + 1 >= lim:
                     break
         # Re-write a compact CSV with enriched columns for download (component scores, salaries, top skills)
         slim_cols = [
