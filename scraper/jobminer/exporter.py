@@ -13,7 +13,7 @@ from typing import Dict, Any, Iterable, Optional
 # Updated export columns for jobs_full (removed offered_salary_currency, added component scores & matched_skills)
 EXPORT_COLUMNS = [
     'job_id','title','company_name','company_name_normalized','location','location_normalized','work_mode','posted_at','employment_type','seniority_level',
-    'offered_salary_min','offered_salary_max','offered_salary_currency','salary_period','salary_is_predicted','offered_salary_min_usd','offered_salary_max_usd','benefits','benefits_normalized',
+    'offered_salary_min','offered_salary_max','offered_salary_currency','salary_period','salary_is_predicted','salary_heuristic_extracted','offered_salary_min_usd','offered_salary_max_usd','benefits','benefits_normalized',
     'skill_score','skill_precision','skill_recall','skill_overlap_count','skill_core_size','semantic_score','score_total','matched_skills','status','apply_url','geocode_lat','geocode_lon'
 ]
 
@@ -145,18 +145,17 @@ class Exporter:
             self._benefit_map = load_benefit_mappings(root)
         salary_period = getattr(j, 'salary_period', None) or 'yearly'
         # Heuristic salary extraction if missing
+        salary_heuristic_used = False
         if j.offered_salary_min is None and j.offered_salary_max is None and j.description_clean:
             import re
             text = j.description_clean
-            # Environment controls
             require_symbol = (os.getenv('JOBMINER_SALARY_REQUIRE_SYMBOL','1').lower() in ('1','true','yes','on'))
             min_salary = os.getenv('JOBMINER_SALARY_MIN_YEARLY')
             try:
                 min_salary = int(min_salary) if min_salary else 70000
             except Exception:
                 min_salary = 70000
-            # Pattern demands either a currency symbol OR explicit 'k' units to reduce false positives
-            pattern = re.compile(r'(\$|£|€)?\s?(\d{2,3}(?:[,\d]{0,3})?(?:k|,?000)?)\s*(?:-|to|–|—|–)\s*(\$|£|€)?\s?(\d{2,3}(?:[,\d]{0,3})?(?:k|,?000)?)', re.IGNORECASE)
+            pattern = re.compile(r'(\$|£|€)?\s?(\d{2,3}(?:[,\d]{0,3})?(?:k|,?000)?)\s*(?:-|to|–|—)\s*(\$|£|€)?\s?(\d{2,3}(?:[,\d]{0,3})?(?:k|,?000)?)', re.IGNORECASE)
             candidates = []
             def _norm(v: str) -> int | None:
                 if not v: return None
@@ -165,28 +164,25 @@ class Exporter:
                 if v_clean.endswith('k'):
                     mult = 1000
                     v_clean = v_clean[:-1]
-                # Reject years/phone-like long numbers (e.g., 2024, 18005551234) heuristically
                 if len(v_clean) >= 7 and mult == 1:
                     return None
                 try:
-                    val = int(float(v_clean) * mult)
-                    return val
+                    return int(float(v_clean) * mult)
                 except Exception:
                     return None
-            for m in pattern.finditer(text[:8000]):  # only scan first 8k chars
+            for m in pattern.finditer(text[:8000]):
                 a = _norm(m.group(2)); b = _norm(m.group(4))
                 cur_sym = m.group(1) or m.group(3)
-                # Require symbol if configured
                 if require_symbol and not cur_sym:
                     continue
                 if a and b and a < b:
-                    if b < min_salary:  # discard ranges below threshold
+                    if b < min_salary:
                         continue
                     candidates.append((a,b,cur_sym))
             if candidates:
-                # Choose smallest upper bound range (often base salary vs huge OTE claims)
                 a,b,sym = sorted(candidates, key=lambda x: x[1])[0]
                 j.offered_salary_min, j.offered_salary_max = a,b
+                salary_heuristic_used = True
                 if not getattr(j, 'offered_salary_currency', None):
                     cur_map = {'$':'USD','£':'GBP','€':'EUR'}
                     if sym: j.offered_salary_currency = cur_map.get(sym, None)
@@ -216,6 +212,7 @@ class Exporter:
             'salary_is_predicted': getattr(j, 'salary_is_predicted', None),
             'offered_salary_min_usd': min_usd,
             'offered_salary_max_usd': max_usd,
+            'salary_heuristic_extracted': salary_heuristic_used or None,
             'benefits': ", ".join(j.benefits) if j.benefits else None,
             'benefits_normalized': ", ".join(benefits_norm) if benefits_norm else None,
             'skill_score': (j.score_breakdown or {}).get('skill'),

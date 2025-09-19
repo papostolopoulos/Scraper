@@ -133,8 +133,7 @@ PY
         if: env.TESTS_FAILED == '1' && env.NON_FLAKY_FAILED != '1'
         run: |
           python -m coverage html -d htmlcov
-
-  - name: Generate coverage badge
+      - name: Generate coverage badge
         if: always()
         run: |
           python scripts/coverage_badge.py coverage.xml coverage_badge.json || echo "badge generation skipped"

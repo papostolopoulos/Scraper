@@ -1,7 +1,7 @@
 # Job Miner Project Plan
 
 ## 1. Objective & Reliability Criteria
-**Objective (Updated Sep 18, 2025):** Deliver a simple web experience where a user can upload a resume, enter job search criteria, and download a CSV (capped at 100 roles) ranked against their skills. Preserve determinism, transparency, and ToS compliance while focusing on an MVP path to value.
+**Objective (Updated Sep 19, 2025):** Deliver a simple web experience where a user can upload a resume, enter job search criteria, and download a CSV (capped at 100 roles) ranked against their skills. Preserve determinism, transparency, and ToS compliance while focusing on an MVP path to value.
 
 **What Success Looks Like:**
 - You can run one command to collect (or ingest) jobs, score them, and export structured outputs (Excel / CSV) any day with consistent runtime and without manual cleanup.
@@ -27,8 +27,8 @@
 |------|--------------------------------|----------------------|
 | Resume Understanding | We parse the resume once and store structured sections and skills. | Avoids re-reading and speeds up scoring; consistent skill base. |
 | Skill Memory | We keep a growing file of previously analyzed job descriptions and their extracted skills. | Saves time on repeated runs and avoids reprocessing unchanged postings. |
-| Scoring Pipeline | A script puts everything together: loads jobs, analyzes skills overlap, produces a score, and exports files. | Gives a single repeatable action to get ranked jobs. |
-| Export Outputs | Creates Excel and CSV outputs, including a focused shortlist. | Easy sharing and filtering without touching code. |
+| Scoring Pipeline | Two‑phase pipeline (extraction pass + IDF‑weighted skill scoring) produces a composite score and exports files. | Improves score discrimination & transparency while remaining deterministic. |
+| Export Outputs | Excel + CSV (or streaming CSV) incl. shortlist, debug skill metrics, salary provenance flag. | Easier sharing, lower memory footprint, improved trust in salary fields. |
 | Database Foundation | Stores job postings with a version tag so we can evolve structure safely. | Keeps historical data and prevents format confusion. |
 | Schema Version Tracking | We record the database layout version and test it. | Early warning if we forget to migrate after changing fields. |
 | Caching (Resume) | The processed resume is cached with a content fingerprint. | Changes to the resume automatically rebuild; unchanged keeps things fast. |
@@ -53,38 +53,37 @@
 | Semantic Config Externalization | Introduced `config/semantic.yml` with environment overrides and a `max_new` cap. | Easier tuning, deterministic runs, and safe bounds on enrichment additions. |
 | Semantic Benchmark & Caching | Added benchmark script, seed token caching, and optional embedding of metrics into run summary. | Visibility into enrichment overhead and trend tracking; faster repeated runs. |
 
-## 3. Remaining Tasks (To Reach “Complete” Definition)
-Grouped by theme (plain language first):
+## 3. Remaining Tasks (Updated)
+Grouped by theme (only active / future items retained):
 
 A. Data Quality & Enrichment
-- Consider embedding-based skill expansion (optional) with toggle + tests (semantic TF‑IDF enrichment exists today).
+- Optional deeper semantic similarity component benchmarking (currently env‑toggled off by default).
+- Potential second‑pass parallelization (skill weighting already optimized; need measurement first).
 
 B. User Experience & Transparency
-- (No pending items — explanations, weighting config, and outcome CLI are implemented.)
+- Surface percentage progress + simple ETA in frontend (API now exposes raw counts per phase).
+- Show top skill overlaps (precision/recall) inline for top N jobs.
 
 C. Reliability & Monitoring
-- Implement daily snapshot automation (small, consistent dataset) and persist key metrics for trend analysis.
-- Optional lightweight health dashboard (local HTML or Markdown generation).
+- Daily snapshot automation (controlled dataset); persist rolling metrics (avg score, extraction time, skills/job).
+- Lightweight health summary (Markdown) embedding last run timings & cache stats.
 
 D. Scaling & Performance
-- (No pending items — parallel extraction and streaming export are implemented.)
+- Benchmark multi-worker scoring second pass; if useful, expose SCRAPER_SCORE_WORKERS env.
 
 E. Data Governance & Safety
-- (No pending items — redaction and ToS compliance gate are implemented.)
+- Temp artifact retention policy (auto-delete CSV artifacts beyond TTL).
 
-F. Test & Quality Gaps
-- (No pending items — property-based/fuzz tests and branch coverage uplift are implemented.)
+F. Documentation & Onboarding
+- CSV column reference (debug skill metrics, salary_heuristic_extracted) — pending README addition.
 
-G. Documentation & Onboarding
-- (No pending items — Quickstart, architecture diagram, and migration playbook are published.)
+G. Release & Distribution
+- Finalize 1.0.0 release after docs + snapshot tooling.
 
-H. Release & Distribution
-- Finalize 1.0.0 release and polish changelog as features land.
-
-I. Optional Stretch Features
-- Additional sources (beyond Indeed) via plug‑in interface.
-- Resume A/B comparison (two resumes, scoring deltas).
-- Skill gap recommender (top missing skills per cluster of high‑interest jobs).
+H. Optional Stretch
+- Additional API sources beyond Adzuna (plug‑in adapter pattern in place).
+- Resume A/B comparison + differential skill gap analysis.
+- Skill gap recommender (cluster high-interest jobs, aggregate missing skills).
 
 ## 3a. MVP Definition & Priority Order (Re-scoped for Web UI)
 **MVP Goal:** A local web page (can reuse/extend the existing Job Miner page) that lets a user:
@@ -147,6 +146,11 @@ Notes on compliance: Automated scraping of LinkedIn search results violates Link
 | Multi-source ingestion | Stretch | 6 | 2 | Done | Plugin framework + mock source + ingest script + tests |
 | Release automation (GH Actions) | Release | 2 | 0.5 | Done | Tag-triggered build + release notes extraction |
 | Semantic enrichment refinement | Post-MVP | 5 | 1 | Done | TF-IDF cosine expansion + deterministic ordering + tests |
+| IDF-like skill weighting | Post-MVP | 6 | 2 | Done | Frequency-aware weighting + debug metrics (precision/recall/overlap/core size) |
+| Salary heuristic + provenance flag | Post-MVP | 5 | 1.5 | Done | Safe currency/range extraction with symbol + min threshold; provenance column added |
+| Async job model & polling API | Web | 6 | 3 | Done | Background jobs (/api/jobs) replace blocking prepare; resiliency & UX improvement |
+| Progress metrics in status endpoint | Web | 3 | 1 | Done | Extraction & scoring phase counts exposed for frontend polling |
+| Paging env overrides | Performance | 1 | 0.25 | Done | JOBMINER_MAX_PAGES / JOBMINER_RESULTS_PER_PAGE override dynamic sizing |
 
 > Actual Hours: Will be filled when each task completes; variance tracked (+/- %).
 

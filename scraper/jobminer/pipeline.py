@@ -25,7 +25,16 @@ CONFIG_DIR = Path(__file__).resolve().parent.parent / 'config'
 logger = logging.getLogger(__name__)
 
 
-def score_all(db: JobDB, resume_pdf: Path, seed_skills_path: Path, target_seniority=None, write_summary: bool = True, semantic_override: bool | None = None, max_workers: int | None = None):
+def score_all(
+    db: JobDB,
+    resume_pdf: Path,
+    seed_skills_path: Path,
+    target_seniority=None,
+    write_summary: bool = True,
+    semantic_override: bool | None = None,
+    max_workers: int | None = None,
+    progress_cb=None,
+):
     if target_seniority is None:
         target_seniority = ['Associate','Mid-Senior']
     t_start = time.time()
@@ -55,6 +64,11 @@ def score_all(db: JobDB, resume_pdf: Path, seed_skills_path: Path, target_senior
     sem_cfg = match_cfg.get('semantic', {})
     use_semantic = semantic_enabled(match_cfg, semantic_override)
     jobs = db.fetch_all()
+    if progress_cb:
+        try:
+            progress_cb(phase='fetch', processed=0, total=len(jobs))
+        except Exception:
+            pass
     t_fetch_jobs = time.time()
     # In-memory cache: description_hash -> {benefits, extracted, overlap, overlaps_meta} (fast within run)
     skill_cache = {}
@@ -191,14 +205,24 @@ def score_all(db: JobDB, resume_pdf: Path, seed_skills_path: Path, target_senior
 
     # Phase 1: extraction
     if max_workers == 1 or len(jobs) <= 1:
-        for j in jobs:
+        for idx, j in enumerate(jobs, start=1):
             updated = process_job(j)
             db.update_scores(updated)
+            if progress_cb and idx % 5 == 0:
+                try:
+                    progress_cb(phase='extract', processed=idx, total=len(jobs))
+                except Exception:
+                    pass
     else:
         workers = min(max_workers, len(jobs))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-            for updated in ex.map(process_job, jobs, chunksize=1):
+            for idx, updated in enumerate(ex.map(process_job, jobs, chunksize=1), start=1):
                 db.update_scores(updated)
+                if progress_cb and idx % 5 == 0:
+                    try:
+                        progress_cb(phase='extract', processed=idx, total=len(jobs))
+                    except Exception:
+                        pass
 
     # Build frequency map for skill weighting (job-level skill presence)
     freq_map = {}
@@ -209,7 +233,7 @@ def score_all(db: JobDB, resume_pdf: Path, seed_skills_path: Path, target_senior
     total_jobs = max(1, len(extracted_jobs))
 
     # Phase 2: compute weighted scores
-    for j in extracted_jobs:
+    for idx, j in enumerate(extracted_jobs, start=1):
         details = compute_skill_score(j.skills_extracted or [], profile.skills, freq_map=freq_map, total_jobs=total_jobs)
         # Attach debug metrics to breakdown early so aggregate_score can reuse
         j.score_breakdown = j.score_breakdown or {}
@@ -222,6 +246,11 @@ def score_all(db: JobDB, resume_pdf: Path, seed_skills_path: Path, target_senior
         })
         aggregate_score(j, profile.skills, profile.summary, weights, target_seniority)
         db.update_scores(j)
+        if progress_cb and idx % 5 == 0:
+            try:
+                progress_cb(phase='score', processed=idx, total=len(extracted_jobs))
+            except Exception:
+                pass
     if use_disk_cache:
         purge_old()
         logger.info("skill_cache_stats", extra={'hits': cache_hits, 'misses': cache_misses})

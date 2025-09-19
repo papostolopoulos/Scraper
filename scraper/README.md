@@ -319,6 +319,119 @@ Excel files (`jobs_full.xlsx`, `jobs_rationale.xlsx`) are skipped to avoid memor
 
 Automated test `test_streaming_export.py` verifies streaming and non-streaming CSV parity.
 
+### CSV Column Reference
+The current web download ("slim" CSV produced by `/api/jobs/{id}/download`) intentionally exports a reduced column set focused on ranking & actionability. Some normalization/debug fields documented earlier (e.g. `company_name_normalized`, `location_normalized`, `offered_salary_min_usd`, `offered_salary_max_usd`, `geocode_lat`, `geocode_lon`) are not present in the slim file and are therefore removed from this reference to avoid confusion.
+
+Slim CSV columns (in order):
+`title, company_name, location, work_mode, employment_type, posted_at, offered_salary_min, offered_salary_max, offered_salary_currency, salary_period, salary_is_predicted, skill_score, skill_precision, skill_recall, skill_overlap_count, skill_core_size, semantic_score, score_total, matched_skills, apply_url, top_skills`
+
+Future enhancement: a "full" export (already supported by the backend exporter for offline runs) includes additional normalization and provenance fields; when (or if) exposed via the web flow those columns will be re-documented here.
+
+| Column | Description | Notes |
+|--------|-------------|-------|
+| title | Job title | Raw source text (may undergo redaction if enabled). |
+| company_name | Company name | Raw source; may be redacted. |
+| location | Location string | Unnormalized display value. |
+| work_mode | remote / hybrid / onsite | Derived or source-provided. |
+| employment_type | full_time / part_time / contract etc. | Blank if unavailable. |
+| posted_at | ISO date published | Date only (UTC). |
+| offered_salary_min / offered_salary_max | Salary range bounds | Authoritative API values preferred; may be filled by heuristic extraction. |
+| offered_salary_currency | Currency code | From source or inferred from symbol. |
+| salary_period | Salary period | Often 'yearly'; retained from source when available. |
+| salary_is_predicted | Source prediction flag | Direct passthrough if present. |
+| salary_heuristic_extracted | Flag when range inferred from description | Indicates provenance when authoritative salary absent. |
+| skill_score | Weighted overlap score (IDF-like) | See Skill Metrics section below. |
+| skill_precision | Weighted overlap / weighted job skill mass | Diagnostic (0–1). |
+| skill_recall | Weighted overlap / weighted core resume mass | Diagnostic (0–1). |
+| skill_overlap_count | Distinct overlapping skills | Case-insensitive count. |
+| skill_core_size | Size of adaptive core subset | Half of resume skills clamped [8,24]. |
+| semantic_score | Embedding/fuzzy similarity | 0 if semantic disabled/unavailable. |
+| score_total | Final composite score | Weighted sum (see weights config). |
+| matched_skills | Ordered merged skill list | Overlap → extracted → responsibility/semantic additions. |
+| apply_url | Application or fallback URL | Fallback constructed when absent. |
+| top_skills | First 5 matched skills | Convenience subset for quick scan. |
+
+Rationale / explanation CSV (`jobs_explanations.csv`) adds: `recency_score`, `seniority_component`, `base_extracted`, `resume_overlap`, `overlap_added`, `semantic_added`, `rationale_text`, and snapshot JSON blobs for `weights`, `thresholds`, and `matching` configuration.
+
+### Skill Metrics (Detailed)
+These diagnostic fields help explain why two jobs with similar raw overlap counts can end up with different `skill_score` values.
+
+Terminology:
+- R = Ordered resume skill list (after parsing). An adaptive core subset C is taken from the first portion of R.
+- C = Core resume skill subset (size = min(24, max(8, floor(0.5 * |R|)))). Only C is used for recall denominator.
+- J = Set of unique job skills extracted (`matched_skills`).
+- O = C ∩ J (overlapping core skills, case-insensitive).
+- w(s) = Weight for skill s. If global frequency map available: w(s) = 1 + log(1 + (N / (1 + f_s))) where N = number of jobs processed, f_s = number of jobs containing s (IDF-like). If no freq map, a lightweight fallback weight (1 + len(s)/40) is used.
+
+Computed values:
+1. Weighted overlap: W_O = Σ_{s∈O} w(s)
+2. Job mass: W_J = Σ_{s∈J} w(s)
+3. Core mass: W_C = Σ_{s∈C} w(s)
+4. Precision = W_O / W_J (how concentrated the job's skills are on your core)
+5. Recall = W_O / W_C (how much of your core the job covers)
+6. Harmonic mean (F1) = 2 * Precision * Recall / (Precision + Recall)
+7. Breadth bonus = min(0.08, 0.08 * (W_O / (0.35 * W_C))) giving a diminishing uplift for covering a healthy fraction of the weighted core.
+8. skill_score = min(1.0, F1 + breadth bonus)
+
+Additional counters:
+- `skill_overlap_count` = |O| (unweighted count)
+- `skill_core_size` = |C|
+
+Example A (Focused Match):
+- Core C size = 12; overlapping O size = 6; those 6 are relatively uncommon (higher weights) giving W_O = 7.5
+- W_J = 9.0 (job lists 10 skills, 6 overlap)
+- W_C = 13.0
+- Precision = 7.5 / 9.0 = 0.833
+- Recall = 7.5 / 13.0 ≈ 0.577
+- F1 ≈ 0.684
+- Breadth ratio = 7.5 / (0.35 * 13.0) ≈ 1.65 → bonus capped at 0.08
+- skill_score ≈ 0.764
+
+Example B (Broad but Shallow):
+- Same core size (12). Overlap count still 6, but overlapping skills are very common → W_O = 4.2
+- W_J = 15.0 (job lists many additional generic skills)
+- W_C = 13.0
+- Precision = 4.2 / 15.0 = 0.28
+- Recall = 4.2 / 13.0 ≈ 0.323
+- F1 ≈ 0.300
+- Breadth ratio = 4.2 / (0.35 * 13.0) ≈ 0.924 → bonus = 0.08 * 0.924 ≈ 0.074
+- skill_score ≈ 0.374
+
+Interpretation: Both jobs overlapped on 6 core skills, but pervasive (high-frequency) skills contribute less weight, lowering both precision and recall in Example B; the breadth bonus partially offsets recall limitations but cannot close the gap fully.
+
+Quick Heuristics When Reading Rows:
+- High precision & lower recall → Niche job strongly aligned to a subset of your core; consider if missing core skills are acceptable.
+- High recall & lower precision → Broad coverage but job lists many extra generic or irrelevant skills.
+- Overlap count near core size with balanced precision/recall → Strong overall fit (expect higher composite score given weights).
+- Very low precision (<0.2) even if overlap count moderate → Signal dilution; review unmatched core skills.
+
+#### Salary Provenance Logic
+If authoritative salary fields are absent the exporter scans the description (first ~8000 chars) for bounded ranges with a currency symbol (unless `JOBMINER_SALARY_REQUIRE_SYMBOL=0`) and filters out suspiciously tiny values (`JOBMINER_SALARY_MIN_YEARLY`, default 70000). Successful extraction sets `salary_heuristic_extracted=true` and populates missing min/max (and currency if derivable from symbol).
+
+### Key Environment Variables (New / Updated)
+| Variable | Purpose | Default | Notes / Precedence |
+|----------|---------|---------|--------------------|
+| JOBMINER_TOKEN_TTL_MINUTES | Lifetime of download/job tokens | 60 | Upper bound 1440 (24h). |
+| JOBMINER_MAX_PAGES | Force max pages for Adzuna fetch | dynamic | Overrides adaptive paging when set (1–10). |
+| JOBMINER_RESULTS_PER_PAGE | Force results per page for Adzuna fetch | dynamic | Overrides adaptive per-page size (1–50). |
+| JOBMINER_SALARY_MIN_YEARLY | Minimum accepted inferred yearly salary (heuristic) | 70000 | Applied only to heuristic extraction. |
+| JOBMINER_SALARY_REQUIRE_SYMBOL | Require currency symbol in heuristic range | 1 (true) | Set 0/false to allow symbol-less numeric ranges. |
+| SCRAPER_STREAM_EXPORT | Enable streaming export mode | off | Reduces memory; disables Excel outputs. |
+| SCRAPER_REDACT_EXPORT | Force redaction on/off | config default | CLI flag or env overrides config. |
+| SCRAPER_MAX_WORKERS | Threads for extraction phase | 1 | >1 enables parallel extraction (skill phase). |
+| SCRAPER_SEMANTIC_BENCH / SCRAPER_SEMANTIC_BENCH_LIMIT | Embed semantic benchmark metrics / sample size | off / 10 | Observability only. |
+| SCRAPER_NO_SEMANTIC | Force disable semantic similarity layer | off | Highest semantic precedence (overrides enable). |
+| SCRAPER_SEMANTIC_ENABLE | Explicitly enable/disable semantic (0/1) | unset | Precedence: NO_SEMANTIC > SEMANTIC_ENABLE > matching.yml. |
+| SCRAPER_SEMANTIC_THRESHOLD / SCRAPER_SEMANTIC_MAX_NEW / SCRAPER_SEMANTIC_ENABLE_BIGRAMS | Tune semantic enricher | see config | Applied when semantic enabled. |
+| SCRAPER_REBUILD_RESUME_PROFILE | Rebuild cached resume profile | off | Useful after resume edits. |
+| SCRAPER_CLEAR_SKILL_CACHE | Clear JSONL skill cache pre-run | off | Forces fresh extraction for all jobs. |
+| SCRAPER_DISABLE_FILE_LOGS / SCRAPER_DISABLE_EVENTS | Skip file logs / structured events | off | Speeds iteration; reduces disk IO. |
+
+Semantic toggle resolution order (highest → lowest): explicit function call override (internal), `SCRAPER_NO_SEMANTIC=1`, `SCRAPER_SEMANTIC_ENABLE=0/1`, config file `matching.yml` (`semantic.enable`), fallback default = enabled.
+
+### Debugging Skill Scores
+Use the precision/recall/overlap/core size fields to reason about why two jobs with similar raw overlap counts might diverge in `skill_score` (frequent skills get down‑weighted via IDF-like weighting). A broad but shallow overlap can have lower recall; a concentrated overlap on core resume skills boosts recall and thus F1.
+
 
 ### Compensation & Benefit Normalization
 Exports now include additional columns for salary conversion and normalized benefits:

@@ -158,6 +158,7 @@ def _process_job(job: JobRun):
             dp = str(date_posted).lower()
             max_days_old = {"1":1,"3":3,"7":7,"14":14,"30":30}.get(dp)
         target_limit = limit
+        # Dynamic sizing with optional env overrides
         if target_limit <= 25:
             dyn_pages, dyn_per = 1, target_limit
         elif target_limit <= 50:
@@ -165,6 +166,16 @@ def _process_job(job: JobRun):
         else:
             dyn_pages, dyn_per = 3, min(50, (target_limit + 2)//3)
         dyn_per = max(1, min(50, dyn_per))
+        # Env overrides
+        max_pages_env = os.getenv('JOBMINER_MAX_PAGES')
+        rpp_env = os.getenv('JOBMINER_RESULTS_PER_PAGE')
+        try:
+            if max_pages_env and max_pages_env.isdigit():
+                dyn_pages = max(1, min(10, int(max_pages_env)))
+            if rpp_env and rpp_env.isdigit():
+                dyn_per = max(1, min(50, int(rpp_env)))
+        except Exception:
+            pass
         if not (app_id and app_key):
             raise RuntimeError("Missing Adzuna credentials (supply app_id/app_key)" )
         src = AdzunaSource(
@@ -202,7 +213,11 @@ def _process_job(job: JobRun):
             seed_path.write_text("\n".join(tokens), encoding='utf-8')
         t_score = time.perf_counter()
         if jobs:
-            score_all(db, resume_path, seed_path, write_summary=False, max_workers=1)
+            def _progress_cb(phase, processed, total):
+                job.count = total
+                # We overload 'count' as total jobs; provide processed via timings map for now
+                job.timings[f'progress_{phase}'] = {'processed': processed, 'total': total}
+            score_all(db, resume_path, seed_path, write_summary=False, max_workers=1, progress_cb=_progress_cb)
         job.timings['scoring_sec'] = round(time.perf_counter() - t_score, 3)
         # Export
         job.status = 'exporting'
@@ -321,6 +336,16 @@ def get_job(job_id: str):
     jr = _get_job(job_id)
     if not jr:
         raise HTTPException(status_code=404, detail='job not found')
+    # Extract lightweight progress metrics
+    progress = {}
+    for k,v in jr.timings.items():
+        if k.startswith('progress_'):
+            phase = k.replace('progress_','')
+            try:
+                if isinstance(v, dict):
+                    progress[phase] = v
+            except Exception:
+                pass
     return {
         'job_id': jr.job_id,
         'status': jr.status,
@@ -329,6 +354,7 @@ def get_job(job_id: str):
         'count': jr.count,
         'limit': jr.limit,
         'token': jr.token if jr.status == 'done' else None,
+        'progress': progress or None,
     }
 
 @app.get('/api/jobs/{job_id}/download')
