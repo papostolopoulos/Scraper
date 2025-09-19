@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+miooi<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -32,6 +32,16 @@
       <div class="full">
         <label for="api_base">API Base (optional override)</label>
         <input type="text" id="api_base" placeholder="http://127.0.0.1:8000" />
+      </div>
+      <div class="full">
+        <details>
+          <summary style="cursor:pointer;font-size:12px;">Adzuna credentials (optional – only fill if not set on server)</summary>
+          <label for="adzuna_app_id">Adzuna App ID</label>
+          <input type="text" id="adzuna_app_id" name="app_id" placeholder="Your Adzuna App ID" />
+          <label for="adzuna_app_key" style="margin-top:8px;">Adzuna App Key</label>
+          <input type="text" id="adzuna_app_key" name="app_key" placeholder="Your Adzuna App Key" />
+          <p class="hint" style="margin-top:8px;">Values are stored locally in this browser only (localStorage) and sent with the form when present.</p>
+        </details>
       </div>
       <div class="full">
         <label for="resume">Resume (PDF/DOCX)</label>
@@ -112,11 +122,15 @@
   const downloadBtn = document.getElementById('downloadBtn');
   const msg = document.getElementById('msg');
   const apiBaseInput = document.getElementById('api_base');
+  const adzunaAppIdInput = document.getElementById('adzuna_app_id');
+  const adzunaAppKeyInput = document.getElementById('adzuna_app_key');
   let lastToken = null;
 
   // Attempt auto base: if served from GitHub Pages assume localhost backend unless overridden
   const defaultBase = 'http://127.0.0.1:8000';
   apiBaseInput.value = localStorage.getItem('JOBMINER_API_BASE') || defaultBase;
+  if(adzunaAppIdInput) adzunaAppIdInput.value = localStorage.getItem('ADZUNA_APP_ID') || '';
+  if(adzunaAppKeyInput) adzunaAppKeyInput.value = localStorage.getItem('ADZUNA_APP_KEY') || '';
 
   function apiBase() {
     const v = apiBaseInput.value.trim() || defaultBase;
@@ -139,6 +153,13 @@
     // Remove optional numeric fields if blank so FastAPI doesn't try to coerce empty string to int
     if(fd.has('salary') && (fd.get('salary') === '' || fd.get('salary') === null)) {
       fd.delete('salary');
+    }
+    // Persist Adzuna credentials locally if provided
+    if(adzunaAppIdInput && adzunaAppIdInput.value.trim()) {
+      localStorage.setItem('ADZUNA_APP_ID', adzunaAppIdInput.value.trim());
+    }
+    if(adzunaAppKeyInput && adzunaAppKeyInput.value.trim()) {
+      localStorage.setItem('ADZUNA_APP_KEY', adzunaAppKeyInput.value.trim());
     }
 
     runBtn.disabled = true; runBtn.textContent = 'Working…';

@@ -177,6 +177,10 @@ async def prepare(
             contract_time=contract_time,
         )
 
+        # Validate credentials early to produce a clearer 400 instead of a later generic 500
+        if not (src.app_id and src.app_key):
+            raise HTTPException(status_code=400, detail="Missing Adzuna credentials. Provide app_id & app_key (form fields) or set ADZUNA_APP_ID / ADZUNA_APP_KEY env vars.")
+
         try:
             jobs = src.fetch()
         except AdzunaAuthError as e:
