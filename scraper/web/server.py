@@ -197,8 +197,10 @@ async def prepare(
             raise HTTPException(status_code=502, detail=f"{e.message} (status {e.status})")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Unexpected Adzuna error: {e}")
-    jobs = normalize_ids(jobs, src.name)
-    timings['fetch_sec'] = round(time.perf_counter() - t_fetch_start, 3)
+
+        jobs = normalize_ids(jobs, src.name)
+        timings['fetch_sec'] = round(time.perf_counter() - t_fetch_start, 3)
+
         # Fallback provider if Adzuna returned zero jobs (optional toggle)
         fb_enabled = os.getenv('JOBMINER_FALLBACK_ENABLED','1').lower() in ('1','true','yes','on')
         if fb_enabled and len(jobs) == 0:
@@ -209,6 +211,7 @@ async def prepare(
                     jobs.extend(normalize_ids(fb_jobs, remotive.name))
             except Exception:
                 pass
+
         # Optional client-side filtering for work_mode hints (best-effort)
         if work_mode and work_mode.lower() in ("remote", "hybrid", "onsite"):
             wm = work_mode.lower()
@@ -222,7 +225,6 @@ async def prepare(
                 lim = 50
         else:
             lim = 50
-        # Trim job list before scoring if oversized (keep ordering as fetched)
         if len(jobs) > lim:
             jobs = jobs[:lim]
 
@@ -232,32 +234,30 @@ async def prepare(
         # Seed skills file path; default project config
         seed_path = Path("scraper/config/seed_skills.txt")
         if not seed_path.exists():
-            # fallback minimal seeds derived from title tokens
             tokens = [t for t in re.split(r"[^A-Za-z0-9+.#-]+", title) if t]
             seed_path.write_text("\n".join(tokens), encoding="utf-8")
 
-        # Score all with 1 worker to keep latency predictable for web
+        # Scoring
         t_score_start = time.perf_counter()
         if jobs:
             score_all(db, tmp_resume_path, seed_path, write_summary=False, max_workers=1)
         timings['scoring_sec'] = round(time.perf_counter() - t_score_start, 3)
 
-        # Export streaming CSVs to a temp dir and return the full.csv content (capped later by UI)
+        # Export
         export_dir = TMP_DIR / uuid.uuid4().hex
         exporter = Exporter(db, export_dir, stream=True)
-    t_export_start = time.perf_counter()
-    artifacts = exporter.export_all() or {}
+        t_export_start = time.perf_counter()
+        artifacts = exporter.export_all() or {}
         full_csv = artifacts.get('full_csv')
         if not full_csv or not Path(full_csv).exists():
             if not jobs:
-                # Return empty CSV gracefully
                 out_rows = []
                 data = b"title,company_name,location\n"
                 token = uuid.uuid4().hex
                 TOKENS[token] = { 'data': data, 'created': datetime.now(timezone.utc) }
-                return JSONResponse({"token": token, "count": 0, "empty": True})
+                return JSONResponse({"token": token, "count": 0, "empty": True, "timings": timings})
             raise HTTPException(status_code=500, detail="Failed to build CSV after scoring")
-        # Load and cap to requested limit (already truncated pre-scoring, but safeguard in case export has more)
+
         out_rows = []
         with open(full_csv, 'r', encoding='utf-8', newline='') as f:
             reader = csv.DictReader(f)
@@ -266,7 +266,7 @@ async def prepare(
                 if i + 1 >= lim:
                     break
         timings['export_sec'] = round(time.perf_counter() - t_export_start, 3)
-        # Re-write a compact CSV with enriched columns for download (component scores, salaries, top skills)
+
         slim_cols = [
             'title','company_name','location','work_mode','employment_type','posted_at',
             'offered_salary_min','offered_salary_max','offered_salary_currency','salary_period','salary_is_predicted',
@@ -278,7 +278,6 @@ async def prepare(
             writer.writeheader()
             for r in out_rows:
                 row = {k: r.get(k) for k in slim_cols}
-                # Derive top_skills: use first 5 matched_skills tokens
                 if not row.get('top_skills'):
                     ms = r.get('matched_skills') or ''
                     if ms:
@@ -288,7 +287,7 @@ async def prepare(
                 writer.writerow(row)
             data = buf.getvalue().encode('utf-8')
         else:
-            data = b"title\n"  # empty placeholder
+            data = b"title\n"
     finally:
         try:
             os.remove(tmp_resume_path)
