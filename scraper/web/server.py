@@ -44,8 +44,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-TMP_DIR = Path("scraper/web/tmp")
+_default_tmp_root = Path(os.getenv("JOBMINER_TMP_DIR") or (Path(tempfile.gettempdir()) / "jobminer_artifacts"))
+TMP_DIR = _default_tmp_root
 TMP_DIR.mkdir(parents=True, exist_ok=True)
+
+# Simple persistence file so tokens survive reload cycles
+TOKEN_STATE_FILE = TMP_DIR / "tokens_state.json"
+def _load_tokens_state():
+    if TOKEN_STATE_FILE.exists():
+        try:
+            import json as _json
+            data = _json.loads(TOKEN_STATE_FILE.read_text(encoding="utf-8"))
+            for k,v in list(data.items()):
+                # Re-hydrate datetime
+                try:
+                    created = datetime.fromisoformat(v.get('created'))
+                    TOKENS[k] = {'data': None, 'created': created}
+                except Exception:
+                    continue
+        except Exception:
+            pass
+_load_tokens_state()
 
 # In-memory registry mapping token -> {data: bytes, created: datetime}
 TOKENS: dict[str, dict] = {}
@@ -66,6 +85,17 @@ def _prune_tokens():
     expired = [k for k,v in TOKENS.items() if (now - v['created']) > TOKEN_TTL]
     for k in expired:
         TOKENS.pop(k, None)
+        fp = TMP_DIR / f"{k}.csv"
+        if fp.exists():
+            try: fp.unlink()
+            except Exception: pass
+    # Persist surviving metadata (not blobs) to disk
+    try:
+        import json as _json
+        serializable = {k:{'created': v['created'].isoformat()} for k,v in TOKENS.items()}
+        TOKEN_STATE_FILE.write_text(_json.dumps(serializable), encoding="utf-8")
+    except Exception:
+        pass
 
 def _rate_limited():
     now = datetime.now(timezone.utc)
@@ -166,6 +196,17 @@ async def prepare(
             dp = str(date_posted).lower()
             max_days_old = {"1": 1, "3": 3, "7": 7, "14": 14, "30": 30}.get(dp)
 
+        # Dynamic paging: tune requested pages and per-page to not greatly exceed user limit
+        # Aim to fetch at most ~1.2x limit while minimizing API calls.
+        target_limit = max(1, min(int(limit or 50), 100))
+        if target_limit <= 25:
+            dyn_pages, dyn_per = 1, target_limit
+        elif target_limit <= 50:
+            dyn_pages, dyn_per = 2, (target_limit + 1)//2
+        else:
+            dyn_pages, dyn_per = 3, min(50, (target_limit + 2)//3)
+        dyn_per = max(1, min(50, dyn_per))
+
         src = AdzunaSource(
             name="adzuna",
             app_id=app_id or os.getenv("ADZUNA_APP_ID"),
@@ -174,8 +215,8 @@ async def prepare(
             what=title,
             where=location,
             distance=int(distance),
-            max_pages=3,
-            results_per_page=50,
+            max_pages=dyn_pages,
+            results_per_page=dyn_per,
             max_days_old=max_days_old,
             contract_time=contract_time,
         )
@@ -296,7 +337,17 @@ async def prepare(
 
     token = uuid.uuid4().hex
     _prune_tokens()
-    TOKENS[token] = { 'data': data, 'created': datetime.now(timezone.utc) }
+    created = datetime.now(timezone.utc)
+    TOKENS[token] = { 'data': data, 'created': created }
+    # Write artifact to disk for persistence across reload
+    try:
+        file_path = TMP_DIR / f"{token}.csv"
+        with open(file_path, 'wb') as fh:
+            fh.write(data)
+    except Exception:
+        pass
+    # Persist token metadata
+    _prune_tokens()  # also saves state
     timings['total_sec'] = round(time.perf_counter() - t_total_start, 3)
     return JSONResponse({"token": token, "count": len(out_rows), "empty": len(out_rows)==0, "timings": timings})
 
@@ -305,6 +356,22 @@ async def download(token: str, request: Request):
     _prune_tokens()
     entry = TOKENS.get(token)
     blob = entry['data'] if entry else None
+    if not blob:
+        # Attempt to read from disk (survives reload)
+        file_path = TMP_DIR / f"{token}.csv"
+        if file_path.exists():
+            # Check TTL
+            age = datetime.now(timezone.utc) - datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
+            if age <= TOKEN_TTL:
+                try:
+                    blob = file_path.read_bytes()
+                    # Rehydrate data into TOKENS (so future calls are in-memory)
+                    if entry:
+                        entry['data'] = blob
+                    else:
+                        TOKENS[token] = {'data': blob, 'created': datetime.now(timezone.utc)}
+                except Exception:
+                    blob = None
     if not blob:
         raise HTTPException(status_code=404, detail="Not found or expired")
     # Per-IP daily limit
