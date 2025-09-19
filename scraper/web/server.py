@@ -11,6 +11,10 @@ import os
 import tempfile
 import re
 import time
+import threading
+import concurrent.futures
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any
 
 # Internal imports
 from scraper.jobminer.db import JobDB
@@ -48,6 +52,9 @@ _default_tmp_root = Path(os.getenv("JOBMINER_TMP_DIR") or (Path(tempfile.gettemp
 TMP_DIR = _default_tmp_root
 TMP_DIR.mkdir(parents=True, exist_ok=True)
 
+# In-memory registry mapping token -> {data: bytes | None, created: datetime}
+TOKENS: dict[str, dict] = {}
+
 # Simple persistence file so tokens survive reload cycles
 TOKEN_STATE_FILE = TMP_DIR / "tokens_state.json"
 def _load_tokens_state():
@@ -56,18 +63,18 @@ def _load_tokens_state():
             import json as _json
             data = _json.loads(TOKEN_STATE_FILE.read_text(encoding="utf-8"))
             for k,v in list(data.items()):
-                # Re-hydrate datetime
                 try:
-                    created = datetime.fromisoformat(v.get('created'))
-                    TOKENS[k] = {'data': None, 'created': created}
+                    created_raw = v.get('created')
+                    if not created_raw:
+                        continue
+                    created = datetime.fromisoformat(created_raw)
+                    # Only rehydrate if artifact file still valid (TTL check done later during download)
+                    TOKENS.setdefault(k, {'data': None, 'created': created})
                 except Exception:
                     continue
         except Exception:
             pass
 _load_tokens_state()
-
-# In-memory registry mapping token -> {data: bytes, created: datetime}
-TOKENS: dict[str, dict] = {}
 
 # Simple in-memory rate limiting (global prepare endpoint)
 LAST_CALLS: list[datetime] = []
@@ -78,7 +85,263 @@ RATE_LIMIT_MAX = 12     # max prepare calls per window
 DOWNLOAD_COUNTS: dict[str, dict] = {}
 MAX_DOWNLOADS_PER_DAY = 3
 
-TOKEN_TTL = timedelta(minutes=10)
+# Configurable token TTL (default 60 minutes, override via env)
+def _ttl_minutes():
+    v = os.getenv("JOBMINER_TOKEN_TTL_MINUTES")
+    if v and v.isdigit():
+        return max(1, min(24*60, int(v)))  # cap at 24h
+    return 60
+TOKEN_TTL = timedelta(minutes=_ttl_minutes())
+
+# ---------------- Job-based async pipeline ----------------
+@dataclass
+class JobRun:
+    job_id: str
+    created: datetime
+    status: str = "queued"  # queued|fetching|scoring|exporting|done|error
+    error: Optional[str] = None
+    params: Dict[str, Any] = field(default_factory=dict)
+    timings: Dict[str, float] = field(default_factory=dict)  # phase timings
+    token: Optional[str] = None
+    artifact_file: Optional[Path] = None
+    count: int = 0
+    limit: int = 0
+
+JOBS: Dict[str, JobRun] = {}
+JOBS_LOCK = threading.Lock()
+EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
+def _register_job(j: JobRun):
+    with JOBS_LOCK:
+        JOBS[j.job_id] = j
+
+def _get_job(job_id: str) -> Optional[JobRun]:
+    with JOBS_LOCK:
+        return JOBS.get(job_id)
+
+def _prune_jobs():
+    now = datetime.now(timezone.utc)
+    cutoff = now - TOKEN_TTL  # reuse TTL window for job retention
+    remove = []
+    with JOBS_LOCK:
+        for jid, jr in JOBS.items():
+            if jr.created < cutoff:
+                remove.append(jid)
+        for jid in remove:
+            JOBS.pop(jid, None)
+    # Remove orphan artifact directories? Artifacts are single csv files already handled by token pruning.
+
+def _process_job(job: JobRun):
+    """Background thread task to perform fetch->scoring->export, mirroring legacy /api/prepare."""
+    t_total = time.perf_counter()
+    try:
+        params = job.params
+        job.status = 'fetching'
+        resume_path: Path = params['resume_path']
+        title = params['title']
+        location = params['location']
+        distance = params['distance']
+        limit = params['limit']
+        app_id = params.get('app_id') or os.getenv("ADZUNA_APP_ID")
+        app_key = params.get('app_key') or os.getenv("ADZUNA_APP_KEY")
+        country = params.get('country', 'us')
+        employment_type = params.get('employment_type')
+        date_posted = params.get('date_posted')
+        work_mode = params.get('work_mode')
+        contract_time = None
+        if employment_type:
+            et = employment_type.lower().replace('-', '_')
+            if et in ("full_time", "part_time"):
+                contract_time = et
+        max_days_old = None
+        if date_posted:
+            dp = str(date_posted).lower()
+            max_days_old = {"1":1,"3":3,"7":7,"14":14,"30":30}.get(dp)
+        target_limit = limit
+        if target_limit <= 25:
+            dyn_pages, dyn_per = 1, target_limit
+        elif target_limit <= 50:
+            dyn_pages, dyn_per = 2, (target_limit + 1)//2
+        else:
+            dyn_pages, dyn_per = 3, min(50, (target_limit + 2)//3)
+        dyn_per = max(1, min(50, dyn_per))
+        if not (app_id and app_key):
+            raise RuntimeError("Missing Adzuna credentials (supply app_id/app_key)" )
+        src = AdzunaSource(
+            name="adzuna", app_id=app_id, app_key=app_key, country=country.lower(),
+            what=title, where=location, distance=int(distance), max_pages=dyn_pages,
+            results_per_page=dyn_per, max_days_old=max_days_old, contract_time=contract_time,
+        )
+        t_fetch = time.perf_counter()
+        jobs = src.fetch()
+        jobs = normalize_ids(jobs, src.name)
+        job.timings['fetch_sec'] = round(time.perf_counter() - t_fetch, 3)
+        fb_enabled = os.getenv('JOBMINER_FALLBACK_ENABLED','1').lower() in ('1','true','yes','on')
+        if fb_enabled and len(jobs) == 0:
+            try:
+                remotive = RemotiveSource(what=title)
+                fb_jobs = remotive.fetch()
+                if fb_jobs:
+                    jobs.extend(normalize_ids(fb_jobs, remotive.name))
+            except Exception:
+                pass
+        if work_mode and work_mode.lower() in ("remote","hybrid","onsite"):
+            wm = work_mode.lower()
+            jobs = [j for j in jobs if (j.work_mode or '').lower() == wm]
+        if len(jobs) > limit:
+            jobs = jobs[:limit]
+        job.count = len(jobs)
+        # DB + scoring
+        job.status = 'scoring'
+        db = JobDB()
+        db.upsert_jobs(jobs)
+        seed_path = Path("scraper/config/seed_skills.txt")
+        if not seed_path.exists():
+            import re as _re
+            tokens = [t for t in _re.split(r"[^A-Za-z0-9+.#-]+", title) if t]
+            seed_path.write_text("\n".join(tokens), encoding='utf-8')
+        t_score = time.perf_counter()
+        if jobs:
+            score_all(db, resume_path, seed_path, write_summary=False, max_workers=1)
+        job.timings['scoring_sec'] = round(time.perf_counter() - t_score, 3)
+        # Export
+        job.status = 'exporting'
+        export_dir = TMP_DIR / uuid.uuid4().hex
+        exporter = Exporter(db, export_dir, stream=True)
+        t_export = time.perf_counter()
+        artifacts = exporter.export_all() or {}
+        full_csv = artifacts.get('full_csv')
+        out_rows = []
+        if full_csv and Path(full_csv).exists():
+            with open(full_csv, 'r', encoding='utf-8', newline='') as f:
+                reader = csv.DictReader(f)
+                for i,row in enumerate(reader):
+                    out_rows.append(row)
+                    if i+1 >= limit:
+                        break
+        job.timings['export_sec'] = round(time.perf_counter() - t_export, 3)
+        slim_cols = [
+            'title','company_name','location','work_mode','employment_type','posted_at',
+            'offered_salary_min','offered_salary_max','offered_salary_currency','salary_period','salary_is_predicted',
+            'offered_salary_min_usd','offered_salary_max_usd','skill_score','semantic_score','score_total','matched_skills','apply_url','top_skills'
+        ]
+        if out_rows:
+            buf = io.StringIO(); w = csv.DictWriter(buf, fieldnames=slim_cols); w.writeheader()
+            for r in out_rows:
+                row = {k:r.get(k) for k in slim_cols}
+                if not row.get('top_skills'):
+                    ms = r.get('matched_skills') or ''
+                    if ms:
+                        parts=[p.strip() for p in ms.split(',') if p.strip()][:5]
+                        if parts: row['top_skills'] = ", ".join(parts)
+                w.writerow(row)
+            data = buf.getvalue().encode('utf-8')
+        else:
+            data = b"title\n"
+        token = uuid.uuid4().hex
+        created = datetime.now(timezone.utc)
+        TOKENS[token] = {'data': data, 'created': created}
+        try:
+            file_path = TMP_DIR / f"{token}.csv"
+            with open(file_path, 'wb') as fh: fh.write(data)
+        except Exception: pass
+        _prune_tokens()
+        job.token = token
+        job.artifact_file = file_path if 'file_path' in locals() else None
+        job.status = 'done'
+    except Exception as e:
+        job.status = 'error'
+        job.error = str(e)
+    finally:
+        job.timings['total_sec'] = round(time.perf_counter() - t_total, 3)
+        try:
+            # Attempt cleanup of resume temp file
+            rp = job.params.get('resume_path')
+            if rp and Path(rp).exists():
+                Path(rp).unlink(missing_ok=True)
+        except Exception:
+            pass
+        _prune_jobs()
+
+@app.post('/api/jobs')
+async def create_job(
+    resume: UploadFile = File(...),
+    title: str = Form(...),
+    location: str = Form(...),
+    distance: int = Form(...),
+    date_posted: str | None = Form(None),
+    work_mode: str | None = Form(None),
+    employment_type: str | None = Form(None),
+    salary: int | None = Form(None),
+    limit: int | None = Form(50),
+    country: str | None = Form("us"),
+    app_id: str | None = Form(None),
+    app_key: str | None = Form(None),
+):
+    # Validate inputs (reuse simplified rules)
+    errs = []
+    if not title: errs.append('title required')
+    if not location: errs.append('location required')
+    if distance is None or distance < 0 or distance > 250: errs.append('distance out of range (0-250)')
+    allowed_ext={'.pdf','.doc','.docx'}; ext = Path(resume.filename or '').suffix.lower()
+    if ext and ext not in allowed_ext: errs.append('unsupported resume type')
+    if errs: raise HTTPException(status_code=400, detail=", ".join(errs))
+    # Store resume temp
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext or '.pdf') as tf:
+            content = await resume.read(); tf.write(content); resume_path = Path(tf.name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'Failed to store resume: {e}')
+    try:
+        lim = max(1, min(int(limit or 50), 100))
+    except Exception:
+        lim = 50
+    job_id = uuid.uuid4().hex
+    jr = JobRun(job_id=job_id, created=datetime.now(timezone.utc), params={
+        'resume_path': resume_path,
+        'title': title,
+        'location': location,
+        'distance': distance,
+        'date_posted': date_posted,
+        'work_mode': work_mode,
+        'employment_type': employment_type,
+        'salary': salary,
+        'limit': lim,
+        'country': country,
+        'app_id': app_id,
+        'app_key': app_key,
+    }, limit=lim)
+    _register_job(jr)
+    # Submit to executor
+    EXECUTOR.submit(_process_job, jr)
+    return {'job_id': job_id, 'status': jr.status}
+
+@app.get('/api/jobs/{job_id}')
+def get_job(job_id: str):
+    jr = _get_job(job_id)
+    if not jr:
+        raise HTTPException(status_code=404, detail='job not found')
+    return {
+        'job_id': jr.job_id,
+        'status': jr.status,
+        'error': jr.error,
+        'timings': jr.timings,
+        'count': jr.count,
+        'limit': jr.limit,
+        'token': jr.token if jr.status == 'done' else None,
+    }
+
+@app.get('/api/jobs/{job_id}/download')
+def download_job(job_id: str):
+    jr = _get_job(job_id)
+    if not jr:
+        raise HTTPException(status_code=404, detail='job not found')
+    if jr.status != 'done' or not jr.token:
+        raise HTTPException(status_code=400, detail='job not ready')
+    # Reuse existing token download logic by delegating
+    return StreamingResponse(io.BytesIO((TOKENS.get(jr.token) or {}).get('data') or (TMP_DIR / f"{jr.token}.csv").read_bytes()), media_type='text/csv', headers={
+        'Content-Disposition': f'attachment; filename=job_results_{jr.token[:8]}.csv'
+    })
 
 def _prune_tokens():
     now = datetime.now(timezone.utc)
@@ -387,6 +650,34 @@ async def download(token: str, request: Request):
 def health():
     _prune_tokens()
     return {"status":"ok","tokens_active": len(TOKENS), "rate_window": RATE_LIMIT_WINDOW, "rate_used": len(LAST_CALLS), "download_ips": len(DOWNLOAD_COUNTS)}
+
+@app.get("/api/debug/tokens")
+def debug_tokens():
+    """Lightweight debug endpoint (DO NOT expose publicly in production).
+    Shows current token metadata and presence of artifact files to help diagnose 404 issues."""
+    now = datetime.now(timezone.utc)
+    items = []
+    for k,v in TOKENS.items():
+        created = v.get('created')
+        age_s = (now - created).total_seconds() if created else None
+        fpath = TMP_DIR / f"{k}.csv"
+        items.append({
+            'token': k,
+            'age_sec': round(age_s,2) if age_s is not None else None,
+            'in_memory': v.get('data') is not None,
+            'file_exists': fpath.exists(),
+            'file_size': fpath.stat().st_size if fpath.exists() else None,
+        })
+    # Also list stray files
+    stray_files = []
+    try:
+        for p in TMP_DIR.glob('*.csv'):
+            t = p.stem
+            if t not in TOKENS:
+                stray_files.append({'file': p.name, 'size': p.stat().st_size})
+    except Exception:
+        pass
+    return {'tokens': items, 'stray_files': stray_files, 'tmp_dir': str(TMP_DIR)}
 
 if __name__ == "__main__":
     import uvicorn

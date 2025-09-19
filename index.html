@@ -25,7 +25,7 @@ miooi<!DOCTYPE html>
 <body>
   <div class="container">
     <h1>Job Miner – Web MVP</h1>
-    <p class="hint">Upload your resume and enter search criteria. The backend scores results against extracted skills and returns a ranked CSV (≤100 roles).</p>
+  <p class="hint">Upload your resume and enter search criteria. Processing now happens asynchronously – you'll see live status updates and can download when ready.</p>
     <div class="env-note">If this page is served from GitHub Pages the API must run locally or on a deployed host. Set <code>JOBMINER_API_BASE</code> below if auto-detection fails.</div>
 
     <form id="job-form">
@@ -110,7 +110,7 @@ miooi<!DOCTYPE html>
         </select>
       </div>
       <div class="full actions">
-        <button type="submit" id="runBtn">Search & Prepare</button>
+        <button type="submit" id="runBtn">Start Job</button>
         <button type="button" id="downloadBtn" disabled>Download CSV</button>
       </div>
       <div class="full"><div id="msg"></div></div>
@@ -130,7 +130,8 @@ miooi<!DOCTYPE html>
   const apiBaseInput = document.getElementById('api_base');
   const adzunaAppIdInput = document.getElementById('adzuna_app_id');
   const adzunaAppKeyInput = document.getElementById('adzuna_app_key');
-  let lastToken = null;
+  let currentJobId = null;
+  let pollTimer = null;
 
   // Attempt auto base: if served from GitHub Pages assume localhost backend unless overridden
   const defaultBase = 'http://127.0.0.1:8000';
@@ -144,74 +145,64 @@ miooi<!DOCTYPE html>
     return v.replace(/\/$/, '');
   }
 
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    msg.textContent = '';
-    downloadBtn.disabled = true;
-    const fd = new FormData(form);
-    // Enforce required fields client-side & abort early instead of letting FastAPI 422
-    for (const f of ['title','location','distance']) {
-      if(!fd.get(f)) {
-        msg.textContent = 'Missing required field: ' + f;
-        return;
-      }
+  async function startJob(fd){
+    const res = await fetch(apiBase() + '/api/jobs', { method:'POST', body: fd });
+    if(!res.ok){
+      let detail = res.status + ' error';
+      try { const j = await res.json(); if(j && j.detail) detail = j.detail; } catch(_e){}
+      throw new Error(detail);
     }
-    // Remove optional numeric fields if blank so FastAPI doesn't try to coerce empty string to int
-    if(fd.has('salary') && (fd.get('salary') === '' || fd.get('salary') === null)) {
-      fd.delete('salary');
-    }
-    // Persist Adzuna credentials locally if provided
-    if(adzunaAppIdInput && adzunaAppIdInput.value.trim()) {
-      localStorage.setItem('ADZUNA_APP_ID', adzunaAppIdInput.value.trim());
-    }
-    if(adzunaAppKeyInput && adzunaAppKeyInput.value.trim()) {
-      localStorage.setItem('ADZUNA_APP_KEY', adzunaAppKeyInput.value.trim());
-    }
+    const data = await res.json();
+    return data.job_id;
+  }
 
-    runBtn.disabled = true; runBtn.textContent = 'Working…';
+  async function poll(jobId){
     try {
-      const res = await fetch(apiBase() + '/api/prepare', { method: 'POST', body: fd });
-      if(!res.ok){
-        let detail = res.status + ' error';
-        try {
-          const j = await res.json();
-          if (j) {
-            if (typeof j.detail === 'string') detail = j.detail;
-            else if (Array.isArray(j.detail)) {
-              // FastAPI validation errors array
-              detail = j.detail.map(d => d.loc ? `${d.loc.join('.')}: ${d.msg}` : (d.msg || JSON.stringify(d))).join('; ');
-            }
-          }
-        } catch(errJSON) {
-          // keep existing detail
-        }
-        throw new Error(detail);
-      }
-      let data;
-      try { data = await res.json(); }
-      catch(parseErr){ throw new Error('Invalid JSON response'); }
-      lastToken = data.token;
-      if (data.empty) {
-        msg.textContent = 'No jobs found (primary + fallback).';
+      const res = await fetch(apiBase() + '/api/jobs/' + encodeURIComponent(jobId));
+      if(!res.ok){ throw new Error('status ' + res.status); }
+      const j = await res.json();
+      if(j.status === 'done'){
+        clearInterval(pollTimer); pollTimer = null; runBtn.disabled = false; downloadBtn.disabled = false;
+        msg.textContent = `Done. ${j.count} jobs processed in ~${(j.timings.total_sec||0)}s.`;
+        downloadBtn.onclick = () => {
+          window.location.href = apiBase() + '/api/jobs/' + jobId + '/download';
+        };
+      } else if (j.status === 'error') {
+        clearInterval(pollTimer); pollTimer = null; runBtn.disabled = false;
+        msg.textContent = 'Error: ' + (j.error || 'Unknown');
       } else {
-        msg.textContent = `Prepared ${data.count} jobs. Ready to download.`;
-        downloadBtn.disabled = false;
+        // Compose progress message
+        let phase = j.status;
+        const t = j.timings || {};
+        const parts = [];
+        if(t.fetch_sec) parts.push('fetch ' + t.fetch_sec + 's');
+        if(t.scoring_sec) parts.push('score ' + t.scoring_sec + 's');
+        if(t.export_sec) parts.push('export ' + t.export_sec + 's');
+        msg.textContent = `Job ${jobId.slice(0,8)}: ${phase} … ${parts.join(', ')}`;
       }
-    } catch(err){
-      console.error('Prepare failed', err);
-      if (err && err.message) {
-        msg.textContent = 'Failed: ' + err.message;
-      } else {
-        msg.textContent = 'Failed (unknown error)';
-      }
-    } finally {
-      runBtn.disabled = false; runBtn.textContent = 'Search & Prepare';
+    } catch(e){
+      console.error('poll error', e);
     }
-  });
+  }
 
-  downloadBtn.addEventListener('click', () => {
-    if(!lastToken) return;
-    window.location.href = apiBase() + '/api/download?token=' + encodeURIComponent(lastToken);
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    if(pollTimer){ clearInterval(pollTimer); pollTimer=null; }
+    msg.textContent=''; downloadBtn.disabled = true; runBtn.disabled = true; runBtn.textContent='Starting…';
+    const fd = new FormData(form);
+    for(const f of ['title','location','distance']){ if(!fd.get(f)){ msg.textContent='Missing required field: '+f; runBtn.disabled=false; runBtn.textContent='Start Job'; return; } }
+    if(fd.has('salary') && (fd.get('salary')==='' || fd.get('salary')===null)) fd.delete('salary');
+    if(adzunaAppIdInput && adzunaAppIdInput.value.trim()) localStorage.setItem('ADZUNA_APP_ID', adzunaAppIdInput.value.trim());
+    if(adzunaAppKeyInput && adzunaAppKeyInput.value.trim()) localStorage.setItem('ADZUNA_APP_KEY', adzunaAppKeyInput.value.trim());
+    try {
+      currentJobId = await startJob(fd);
+      msg.textContent = 'Job queued…';
+      runBtn.textContent='Running…';
+      pollTimer = setInterval(()=> poll(currentJobId), 2500);
+    } catch(err){
+      runBtn.disabled=false; runBtn.textContent='Start Job';
+      msg.textContent = 'Failed: ' + (err.message || 'Unknown');
+    }
   });
 })();
 </script>
