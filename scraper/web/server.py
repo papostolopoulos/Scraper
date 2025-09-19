@@ -10,6 +10,7 @@ import uuid
 import os
 import tempfile
 import re
+import time
 
 # Internal imports
 from scraper.jobminer.db import JobDB
@@ -148,6 +149,8 @@ async def prepare(
 
     # Prepare DB and fetch jobs from Adzuna
     db = JobDB()  # uses default sqlite path under scraper/data
+    timings: dict[str, float] = {}
+    t_total_start = time.perf_counter()
     try:
         # Map web form to Adzuna params
         # Adzuna supports contract_time=full_time|part_time; we pass only when given
@@ -181,6 +184,7 @@ async def prepare(
         if not (src.app_id and src.app_key):
             raise HTTPException(status_code=400, detail="Missing Adzuna credentials. Provide app_id & app_key (form fields) or set ADZUNA_APP_ID / ADZUNA_APP_KEY env vars.")
 
+        t_fetch_start = time.perf_counter()
         try:
             jobs = src.fetch()
         except AdzunaAuthError as e:
@@ -193,7 +197,8 @@ async def prepare(
             raise HTTPException(status_code=502, detail=f"{e.message} (status {e.status})")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Unexpected Adzuna error: {e}")
-        jobs = normalize_ids(jobs, src.name)
+    jobs = normalize_ids(jobs, src.name)
+    timings['fetch_sec'] = round(time.perf_counter() - t_fetch_start, 3)
         # Fallback provider if Adzuna returned zero jobs (optional toggle)
         fb_enabled = os.getenv('JOBMINER_FALLBACK_ENABLED','1').lower() in ('1','true','yes','on')
         if fb_enabled and len(jobs) == 0:
@@ -232,13 +237,16 @@ async def prepare(
             seed_path.write_text("\n".join(tokens), encoding="utf-8")
 
         # Score all with 1 worker to keep latency predictable for web
+        t_score_start = time.perf_counter()
         if jobs:
             score_all(db, tmp_resume_path, seed_path, write_summary=False, max_workers=1)
+        timings['scoring_sec'] = round(time.perf_counter() - t_score_start, 3)
 
         # Export streaming CSVs to a temp dir and return the full.csv content (capped later by UI)
         export_dir = TMP_DIR / uuid.uuid4().hex
         exporter = Exporter(db, export_dir, stream=True)
-        artifacts = exporter.export_all() or {}
+    t_export_start = time.perf_counter()
+    artifacts = exporter.export_all() or {}
         full_csv = artifacts.get('full_csv')
         if not full_csv or not Path(full_csv).exists():
             if not jobs:
@@ -257,6 +265,7 @@ async def prepare(
                 out_rows.append(row)
                 if i + 1 >= lim:
                     break
+        timings['export_sec'] = round(time.perf_counter() - t_export_start, 3)
         # Re-write a compact CSV with enriched columns for download (component scores, salaries, top skills)
         slim_cols = [
             'title','company_name','location','work_mode','employment_type','posted_at',
@@ -289,7 +298,8 @@ async def prepare(
     token = uuid.uuid4().hex
     _prune_tokens()
     TOKENS[token] = { 'data': data, 'created': datetime.now(timezone.utc) }
-    return JSONResponse({"token": token, "count": len(out_rows), "empty": len(out_rows)==0})
+    timings['total_sec'] = round(time.perf_counter() - t_total_start, 3)
+    return JSONResponse({"token": token, "count": len(out_rows), "empty": len(out_rows)==0, "timings": timings})
 
 @app.get("/api/download")
 async def download(token: str, request: Request):
