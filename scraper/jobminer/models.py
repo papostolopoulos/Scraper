@@ -41,6 +41,7 @@ class JobPosting(BaseModel):
     score_breakdown: Optional[Dict[str, float]] = None
     status: str = "new"  # new | reviewed | shortlisted | applied | archived | duplicate
     skills_meta: Optional[Dict[str, Any]] = None  # sources & diagnostics
+    provenance: List[str] = Field(default_factory=list)  # list of source names contributing this record
 
     @field_validator("skills_extracted", "recruiter_profiles", "benefits", mode="before")
     @classmethod

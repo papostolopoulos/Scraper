@@ -47,6 +47,110 @@ python scraper/scripts/run_ingest.py --config scraper/config/sources.yml
 
 Sources implement a simple interface (`fetch() -> List[JobPosting]`). Internal IDs are automatically namespaced (`source_name:raw_id`) to avoid collisions and enable cross-source dedupe.
 
+### Greenhouse Adapter (Public Board API)
+Fetches jobs from a company's public Greenhouse board JSON (`/embed/jobs/json`). Requires only the company slug (appears in the board URL `https://boards.greenhouse.io/<slug>`). Low-rate, read-only usage of this public endpoint; avoid rapid polling.
+
+Config example:
+```yaml
+sources:
+    - name: gh_example
+        enabled: true
+        module: scraper.jobminer.sources.greenhouse_source
+        class: GreenhouseSource
+        options:
+            company_slug: examplecompany   # from URL
+            limit: 150                     # optional cap (default 200)
+            company_name: Example Company  # optional override display name
+```
+
+### Lever Adapter (Public Postings Endpoint)
+Uses Lever's published JSON postings endpoint: `https://api.lever.co/v0/postings/<company_slug>?mode=json`. Also unauthenticated. We merge `descriptionHtml` + list section content for richer skill extraction.
+
+Config example:
+```yaml
+sources:
+    - name: lever_example
+        enabled: true
+        module: scraper.jobminer.sources.lever_source
+        class: LeverSource
+        options:
+            company_slug: exampleco       # from hosted URL
+            limit: 120                    # optional cap
+            company_name: ExampleCo       # optional friendly name
+```
+
+### Combined Example (Multiple Sources)
+```yaml
+sources:
+    - name: gh_example
+        enabled: true
+        module: scraper.jobminer.sources.greenhouse_source
+        class: GreenhouseSource
+        options:
+            company_slug: examplecompany
+            limit: 120
+    - name: lever_example
+        enabled: true
+        module: scraper.jobminer.sources.lever_source
+        class: LeverSource
+        options:
+            company_slug: exampleco
+    - name: adzuna
+        enabled: true
+        module: scraper.jobminer.sources.adzuna_source
+        class: AdzunaSource
+        options:
+            what: data engineer
+            country: us
+            max_pages: 2
+    - name: remotive
+        enabled: true
+        module: scraper.jobminer.sources.remotive_source
+        class: RemotiveSource
+        options:
+            what: python data
+```
+
+Run ingestion (same command):
+```powershell
+python scraper/scripts/run_ingest.py --config scraper/config/sources.yml
+```
+
+### Compliance & Safety Notes (Collection Layer)
+- Only use public, unauthenticated endpoints (Adzuna requires official API keys; Greenhouse/Lever public boards are fine).
+- Do not brute force company slugs; add only organizations you are genuinely tracking.
+- Keep request rates modest (e.g., manual or a low-frequency scheduled run >30m apart).
+- No credential capture or storage is performed by these adapters.
+- For any site with explicit anti-bot clauses or needing login, prefer manual export → local JSON adapter pattern (like the Indeed loader) rather than automated scraping.
+- Provide an opt-out mechanism internally (remove an entry from `sources.yml` → immediately halts collection).
+
+Future enhancement: provenance merging to consolidate the same job across multiple sources (use canonical apply URL & fuzzy title/company matching) is planned; current behavior is simple union with ID namespacing.
+
+### Provenance & Cross-Source De-duplication
+When multiple adapters surface the same underlying job the ingestion layer merges them into a single `JobPosting` while tracking a `provenance` list (source names contributing data).
+
+Duplicate signature logic (hierarchical):
+1. Non-ATS URL host + path + simplified title (strong uniqueness). If the apply URL host is not a known ATS provider it’s assumed to be a canonical corporate application page and kept distinct.
+2. For known ATS hosts (e.g. Greenhouse, Lever, Workable, SmartRecruiters) or missing URL → fallback to company + simplified title + location fragment. This enables merging the same role that appears on multiple ATS platforms for the same company (e.g., migration period) or across mirrored postings.
+
+Merge rules:
+- First encountered job becomes canonical.
+- Additional duplicates append their source name to `provenance`.
+- Longer description replaces a shorter one (preserves richest text for skill extraction).
+- Missing salary fields are filled if a later source provides them.
+- `posted_at` is retained if already set; otherwise earliest available date fills.
+
+Known ATS host list (heuristic, extend as needed): `boards.greenhouse.io`, `jobs.lever.co`, `workable.com`, `smartrecruiters.com`.
+
+The `job_id` remains that of the first source (already namespaced). This keeps downstream references stable while aggregating data quality. Later improvements considered (not yet implemented): fuzzy company normalization before signature, Jaro-Winkler similarity for title drift, and time-based decay to re-merge after major description edits.
+
+CLI visibility (planned flag `--show-provenance`) will enumerate provenance sources during listing. Until then, inspect via direct DB query or full export scripts.
+
+### Polite Rate Limiting Helper
+Module: `jobminer.util.rate_limit` provides `polite_get()` which enforces a minimal interval per host (default 0.75s) plus jitter and light exponential backoff on 429 / transient 5xx. Adapters can opt-in by swapping `client.get(url)` with `polite_get(url)` to further reduce burstiness. Not enabled globally to avoid altering existing timing expectations silently.
+
+Environment suggestion for higher courtesy on shared networks: increase interval via wrapper or local patch (e.g. `min_interval=1.2`).
+
 ### Indeed Adapter (Local JSON Loader)
 To respect Terms of Service, the Indeed adapter does not perform automated scraping. Instead it loads a local JSON export you captured manually (browser save, copy/paste, or API export where permitted).
 
@@ -370,7 +474,7 @@ Computed values:
 4. Precision = W_O / W_J (how concentrated the job's skills are on your core)
 5. Recall = W_O / W_C (how much of your core the job covers)
 6. Harmonic mean (F1) = 2 * Precision * Recall / (Precision + Recall)
-7. Breadth bonus = min(0.08, 0.08 * (W_O / (0.35 * W_C))) giving a diminishing uplift for covering a healthy fraction of the weighted core.
+7. Breadth bonus = min(0.08, 0.08 * (W_O / (0.35 * W_C)))   d for covering a healthy fraction of the weighted core.
 8. skill_score = min(1.0, F1 + breadth bonus)
 
 Additional counters:

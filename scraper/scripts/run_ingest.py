@@ -3,9 +3,9 @@ import yaml
 from pathlib import Path
 import logging
 
-from jobminer.db import JobDB
-from jobminer.sources.base import load_sources, collect_from_sources
-from jobminer.logging_config import setup_logging, log_event
+from scraper.jobminer.db import JobDB
+from scraper.jobminer.sources.base import load_sources, collect_from_sources
+from scraper.jobminer.logging_config import setup_logging, log_event
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Multi-source ingestion runner")
