@@ -47,6 +47,15 @@ def normalize_ids(jobs: List[JobPosting], source_name: str) -> List[JobPosting]:
             j.collected_at = datetime.now(timezone.utc)
         if j.status is None:
             j.status = "new"
+        # Seed provenance with the originating source if not already populated.
+        # This allows merge logic (_merge_jobs) to carry forward earlier sources even when
+        # canonical replacement occurs before we reconstruct provenance at the end.
+        if not getattr(j, "provenance", None):  # empty list or None
+            try:
+                j.provenance = [source_name]
+            except Exception:
+                # Defensive: JobPosting may enforce validation; ignore if assignment fails.
+                pass
     return jobs
 
 
@@ -58,9 +67,8 @@ class LoadedSource:
 
 def load_sources(config: List[Dict[str, Any]]) -> List[LoadedSource]:
     loaded: List[LoadedSource] = []
-    # Sort entries by name for deterministic ordering (helps reproducible merges/tests)
-    config_sorted = sorted(config, key=lambda e: e.get("name", ""))
-    for entry in config_sorted:
+    # Preserve user-defined order; caller can sort if needed. Order matters for canonical heuristic and tests.
+    for entry in config:
         if not entry.get("enabled", True):
             continue
         mod_name = entry["module"]
@@ -146,15 +154,23 @@ def _merge_jobs(existing: JobPosting, incoming: JobPosting):
 def collect_from_sources(sources: List[LoadedSource]) -> List[JobPosting]:
     out: List[JobPosting] = []
     by_sig: dict[str, JobPosting] = {}
+    provenance_map: dict[str, set[str]] = {}
+    group_map: dict[tuple[str,str,str], set[str]] = {}
     for s in sources:
         try:
             jobs = s.instance.fetch() or []
+            # Reduced verbosity: single summary line per source
+            logger.info("source_fetched name=%s count=%d", s.name, len(jobs))
             jobs = normalize_ids(jobs, s.name)
             for j in jobs:
-                # seed provenance with source name if empty
-                if not j.provenance:
-                    j.provenance = [s.name]
                 sig = _dup_signature(j)
+                provenance_map.setdefault(sig, set()).add(s.name)
+                # Secondary coarse grouping (company/title/location) to ensure provenance union even if signature fallback differs
+                comp_key = _canonical_text(j.company_name or "")
+                title_key = _canonical_text(j.title)
+                loc_key = _canonical_text(j.location or "")[:24]
+                group_map.setdefault((comp_key, title_key, loc_key), set()).add(s.name)
+                # Verbose per-job provenance debug removed for normal operations.
                 existing = by_sig.get(sig)
                 if existing:
                     # Decide which object should remain canonical based on quality heuristic
@@ -174,18 +190,25 @@ def collect_from_sources(sources: List[LoadedSource]) -> List[JobPosting]:
                             replace = True
                     if replace:
                         # merge existing into j (carry its provenance) then store j
-                        _merge_jobs(j, existing)  # j becomes canonical; existing data merged in
-                        if s.name not in j.provenance:
-                            j.provenance.append(s.name)
+                        _merge_jobs(j, existing)  # j becomes canonical; existing data merged into j
                         by_sig[sig] = j
                     else:
                         _merge_jobs(existing, j)
-                        if s.name not in existing.provenance:
-                            existing.provenance.append(s.name)
                     continue
                 by_sig[sig] = j
         except Exception as e:  # pragma: no cover - defensive
             logger.error(f"Source {s.name} failed: {e}")
     # Preserve stable insertion ordering (original encounter order of signatures)
-    out.extend(by_sig.values())
+    for sig, job in by_sig.items():
+        comp_key = _canonical_text(job.company_name or "")
+        title_key = _canonical_text(job.title)
+        loc_key = _canonical_text(job.location or "")[:24]
+        group_sources = group_map.get((comp_key, title_key, loc_key), set())
+        sig_sources = provenance_map.get(sig, set())
+        sources_seen = set(job.provenance or [])
+        sources_seen.update(group_sources)
+        sources_seen.update(sig_sources)
+        job.provenance = sorted(sources_seen)
+        logger.info("provenance_final job_id=%s sources=%s", job.job_id, job.provenance)
+        out.append(job)
     return out

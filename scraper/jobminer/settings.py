@@ -58,6 +58,7 @@ class Settings:
     skill_cache_max_entries: int
     skill_cache_max_disk_mb: int
     metrics_output_path: Path
+    fuzzy_normalization: bool
 
 def load_settings() -> Settings:
     return Settings(
@@ -68,6 +69,7 @@ def load_settings() -> Settings:
         skill_cache_max_entries=_env_int('SCRAPER_SKILL_CACHE_MAX_ENTRIES', 500),
         skill_cache_max_disk_mb=_env_int('SCRAPER_SKILL_CACHE_MAX_MB', 8),
         metrics_output_path=Path(os.getenv('SCRAPER_RUN_SUMMARY', 'scraper/data/run_summary.json')),
+        fuzzy_normalization=(os.getenv('JOBMINER_FUZZY_NORMALIZATION','0') in ('1','true','TRUE','yes','on')),
     )
 
 SETTINGS = load_settings()

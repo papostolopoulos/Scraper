@@ -1,0 +1,8 @@
+# Category weights for prioritizing skill gaps.
+# priority_score = (frequency / shortlisted_jobs) * category_weight * avg_weighted_job_score
+# Keys: category names used in skill_taxonomy.yml
+# Values: positive floats (default 1.0 if missing)
+data_engineering: 1.3
+workflow: 1.1
+infrastructure: 1.2
+visualization: 0.9

@@ -1,5 +1,5 @@
 from __future__ import annotations
-"""Redaction utilities for exports.
+r"""Redaction utilities for exports.
 
 Allows masking of potential PII or sensitive tokens (emails, phone numbers, URLs) in export fields.
 Patterns configurable via YAML at config/redaction.yml

@@ -1,12 +1,21 @@
+"""SQLite persistence layer for JobMiner.
+
+This file was reconstructed after corruption. It provides a persistent connection
+`JobDB` class used by exporters and scoring code. It also persists a `provenance`
+column (JSON array) capturing all contributing sources for a merged job posting.
+"""
+
 from __future__ import annotations
+
+import json
 import sqlite3
 from pathlib import Path
 from typing import Iterable, List
+
 from .models import JobPosting
 from .settings import SCHEMA_VERSION
-import json
 
-DB_FILE = Path(__file__).resolve().parent.parent / 'data' / 'db.sqlite'
+DB_FILE = Path(__file__).resolve().parent.parent / "data" / "db.sqlite"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -42,7 +51,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     score_total REAL,
     score_breakdown TEXT,
     status TEXT,
-    skills_meta TEXT
+    skills_meta TEXT,
+    provenance TEXT
 );
 """
 
@@ -65,237 +75,240 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 """
 
+
 class JobDB:
-    def __init__(self, db_path: Path = DB_FILE):
-        self.db_path = db_path
+    """Lightweight wrapper around a persistent sqlite3 connection.
+
+    ResourceWarnings were previously emitted due to unclosed connections when
+    many short-lived JobDB instances were created. A single persistent
+    connection per instance plus deterministic close() fixes that.
+    """
+
+    def __init__(self, db_path: Path | str = DB_FILE):
+        self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(SCHEMA_SQL)
-            conn.execute(META_TABLE_SQL)
-            # STATUS_HISTORY_SQL contains multiple statements; use executescript
-            try:
-                conn.executescript(STATUS_HISTORY_SQL)
-            except Exception:
-                # Fallback attempt: split on semicolons (best effort)
-                for stmt in STATUS_HISTORY_SQL.split(';'):
-                    s = stmt.strip()
-                    if s:
-                        try:
-                            conn.execute(s)
-                        except Exception:
-                            pass
-            # schema version check
-            try:
-                cur = conn.execute("SELECT value FROM meta WHERE key='schema_version'")
-                row = cur.fetchone()
-                current_version = int(row[0]) if row else None
-            except Exception:
-                current_version = None
-            # Lightweight migration: add page_title if missing
-            try:
-                cur = conn.execute("PRAGMA table_info(jobs)")
-                cols = [r[1] for r in cur.fetchall()]
-                if 'page_title' not in cols:
-                    conn.execute("ALTER TABLE jobs ADD COLUMN page_title TEXT")
-                if 'skills_meta' not in cols:
-                    conn.execute("ALTER TABLE jobs ADD COLUMN skills_meta TEXT")
-                if 'company_name_normalized' not in cols:
-                    conn.execute("ALTER TABLE jobs ADD COLUMN company_name_normalized TEXT")
-                if 'location_normalized' not in cols:
-                    conn.execute("ALTER TABLE jobs ADD COLUMN location_normalized TEXT")
-                if 'location_meta' not in cols:
-                    conn.execute("ALTER TABLE jobs ADD COLUMN location_meta TEXT")
-                if 'company_map_key' not in cols:
-                    conn.execute("ALTER TABLE jobs ADD COLUMN company_map_key TEXT")
-                if 'normalization_version' not in cols:
-                    conn.execute("ALTER TABLE jobs ADD COLUMN normalization_version TEXT")
-                if 'enrichment_run_at' not in cols:
-                    conn.execute("ALTER TABLE jobs ADD COLUMN enrichment_run_at TEXT")
-                if 'geocode_lat' not in cols:
-                    conn.execute("ALTER TABLE jobs ADD COLUMN geocode_lat REAL")
-                if 'geocode_lon' not in cols:
-                    conn.execute("ALTER TABLE jobs ADD COLUMN geocode_lon REAL")
-                # Physical removal of obsolete columns if they exist (offered_salary_period, offered_salary_raw)
-                # SQLite cannot DROP COLUMN before 3.35 easily; recreate table if needed.
-                obsolete = [c for c in ['offered_salary_period','offered_salary_raw'] if c in cols]
-                if obsolete:
-                    # Recreate without obsolete columns
-                    conn.execute('BEGIN')
-                    try:
-                        conn.execute("ALTER TABLE jobs RENAME TO jobs_old")
-                        conn.execute(SCHEMA_SQL)  # new schema w/out obsolete
-                        # Map columns that still exist
-                        new_cols = [
-                            'job_id','title','company_name','page_title','company_linkedin_id','location','work_mode','company_name_normalized','location_normalized','location_meta','company_map_key','normalization_version','enrichment_run_at','geocode_lat','geocode_lon','posted_at','collected_at',
-                            'employment_type','seniority_level','skills_extracted','description_raw','description_clean','apply_method','apply_url','recruiter_profiles',
-                            'offered_salary_min','offered_salary_max','offered_salary_currency','benefits','score_total','score_breakdown','status','skills_meta'
-                        ]
-                        select_cols = ','.join(new_cols)
-                        conn.execute(f"INSERT INTO jobs ({select_cols}) SELECT {select_cols} FROM jobs_old")
-                        conn.execute("DROP TABLE jobs_old")
-                        conn.execute('COMMIT')
-                    except Exception:
-                        conn.execute('ROLLBACK')
-                # Create helpful index for dedupe / queries (ignore failures)
-                try:
-                    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_norm_keys ON jobs(company_name_normalized, location_normalized, title)")
-                except Exception:
-                    pass
-            except Exception:
-                pass
-            # Update schema version if changed
-            try:
-                if current_version != SCHEMA_VERSION:
-                    conn.execute("INSERT INTO meta(key,value) VALUES('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(SCHEMA_VERSION),))
-            except Exception:
-                pass
-        # No persistent connection kept; placeholder attribute for API symmetry
+        self._conn = sqlite3.connect(self.db_path)
         self._closed = False
+        self._init_schema()
 
-    def close(self):  # for explicit lifecycle control in tests (Windows file locks)
-        self._closed = True
-        # no persistent connection to close; method retained for API symmetry
+    # ------------------------- schema & migrations -------------------------
+    def _init_schema(self):
+        conn = self._conn
+        conn.execute(SCHEMA_SQL)
+        conn.execute(META_TABLE_SQL)
+        # status history (executescript handles both statements)
+        try:
+            conn.executescript(STATUS_HISTORY_SQL)
+        except Exception:
+            # fallback if executescript partially fails
+            for stmt in STATUS_HISTORY_SQL.split(";"):
+                s = stmt.strip()
+                if s:
+                    try:
+                        conn.execute(s)
+                    except Exception:
+                        pass
 
-    # Context manager helpers for use in tests to reduce Windows file lock timing issues
+        # Read existing schema version
+        try:
+            cur = conn.execute("SELECT value FROM meta WHERE key='schema_version'")
+            row = cur.fetchone()
+            current_version = int(row[0]) if row else None
+        except Exception:
+            current_version = None
+
+        # Idempotent column additions (future proofing)
+        try:
+            cur = conn.execute("PRAGMA table_info(jobs)")
+            cols = [r[1] for r in cur.fetchall()]
+            def add(col: str, ddl_tail: str):
+                if col not in cols:
+                    try:
+                        conn.execute(f"ALTER TABLE jobs ADD COLUMN {ddl_tail}")
+                    except Exception:
+                        pass
+            add("page_title", "page_title TEXT")
+            add("skills_meta", "skills_meta TEXT")
+            add("provenance", "provenance TEXT")
+            add("company_name_normalized", "company_name_normalized TEXT")
+            add("location_normalized", "location_normalized TEXT")
+            add("location_meta", "location_meta TEXT")
+            add("company_map_key", "company_map_key TEXT")
+            add("normalization_version", "normalization_version TEXT")
+            add("enrichment_run_at", "enrichment_run_at TEXT")
+            add("geocode_lat", "geocode_lat REAL")
+            add("geocode_lon", "geocode_lon REAL")
+            try:
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_jobs_norm_keys ON jobs(company_name_normalized, location_normalized, title)"
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Update schema version marker
+        try:
+            if current_version != SCHEMA_VERSION:
+                conn.execute(
+                    "INSERT INTO meta(key,value) VALUES('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (str(SCHEMA_VERSION),),
+                )
+        except Exception:
+            pass
+        conn.commit()
+
+    # ----------------------------- lifecycle ------------------------------
+    def close(self):
+        if not self._closed:
+            try:
+                self._conn.commit()
+                self._conn.close()
+            except Exception:
+                pass
+            self._closed = True
+
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc, tb):
         self.close()
 
+    def __del__(self):  # safety net
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    # ------------------------------ operations ----------------------------
     def upsert_jobs(self, jobs: Iterable[JobPosting]):
         rows = [self._job_to_row(j) for j in jobs]
-        with sqlite3.connect(self.db_path) as conn:
-            conn.executemany("""
-                INSERT INTO jobs (
-                    job_id, title, company_name, page_title, company_linkedin_id, location, work_mode, company_name_normalized, location_normalized, location_meta, company_map_key, normalization_version, enrichment_run_at, geocode_lat, geocode_lon, posted_at, collected_at,
-                    employment_type, seniority_level, skills_extracted, description_raw, description_clean,
-                    apply_method, apply_url, recruiter_profiles, offered_salary_min, offered_salary_max,
-                    offered_salary_currency, benefits, score_total, score_breakdown, status, skills_meta
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(job_id) DO UPDATE SET
-                    title=excluded.title,
-                    company_name=excluded.company_name,
-                    page_title=excluded.page_title,
-                    company_linkedin_id=excluded.company_linkedin_id,
-                    location=excluded.location,
-                    work_mode=excluded.work_mode,
-                    company_name_normalized=excluded.company_name_normalized,
-                    location_normalized=excluded.location_normalized,
-                    location_meta=excluded.location_meta,
-                    company_map_key=excluded.company_map_key,
-                    normalization_version=excluded.normalization_version,
-                    enrichment_run_at=excluded.enrichment_run_at,
-                    geocode_lat=excluded.geocode_lat,
-                    geocode_lon=excluded.geocode_lon,
-                    posted_at=excluded.posted_at,
-                    collected_at=excluded.collected_at,
-                    employment_type=excluded.employment_type,
-                    seniority_level=excluded.seniority_level,
-                    skills_extracted=excluded.skills_extracted,
-                    description_raw=excluded.description_raw,
-                    description_clean=excluded.description_clean,
-                    apply_method=excluded.apply_method,
-                    apply_url=excluded.apply_url,
-                    recruiter_profiles=excluded.recruiter_profiles,
-                    offered_salary_min=excluded.offered_salary_min,
-                    offered_salary_max=excluded.offered_salary_max,
-                    offered_salary_currency=excluded.offered_salary_currency,
-                    benefits=excluded.benefits,
-                    score_total=excluded.score_total,
-                    score_breakdown=excluded.score_breakdown,
-                    status=excluded.status,
-                    skills_meta=excluded.skills_meta
-            """, rows)
+        conn = self._conn
+        conn.executemany(
+            """
+            INSERT INTO jobs (
+                job_id, title, company_name, page_title, company_linkedin_id, location, work_mode, company_name_normalized, location_normalized, location_meta, company_map_key, normalization_version, enrichment_run_at, geocode_lat, geocode_lon, posted_at, collected_at,
+                employment_type, seniority_level, skills_extracted, description_raw, description_clean,
+                apply_method, apply_url, recruiter_profiles, offered_salary_min, offered_salary_max,
+                offered_salary_currency, benefits, score_total, score_breakdown, status, skills_meta, provenance
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(job_id) DO UPDATE SET
+                title=excluded.title,
+                company_name=excluded.company_name,
+                page_title=excluded.page_title,
+                company_linkedin_id=excluded.company_linkedin_id,
+                location=excluded.location,
+                work_mode=excluded.work_mode,
+                company_name_normalized=excluded.company_name_normalized,
+                location_normalized=excluded.location_normalized,
+                location_meta=excluded.location_meta,
+                company_map_key=excluded.company_map_key,
+                normalization_version=excluded.normalization_version,
+                enrichment_run_at=excluded.enrichment_run_at,
+                geocode_lat=excluded.geocode_lat,
+                geocode_lon=excluded.geocode_lon,
+                posted_at=excluded.posted_at,
+                collected_at=excluded.collected_at,
+                employment_type=excluded.employment_type,
+                seniority_level=excluded.seniority_level,
+                skills_extracted=excluded.skills_extracted,
+                description_raw=excluded.description_raw,
+                description_clean=excluded.description_clean,
+                apply_method=excluded.apply_method,
+                apply_url=excluded.apply_url,
+                recruiter_profiles=excluded.recruiter_profiles,
+                offered_salary_min=excluded.offered_salary_min,
+                offered_salary_max=excluded.offered_salary_max,
+                offered_salary_currency=excluded.offered_salary_currency,
+                benefits=excluded.benefits,
+                score_total=excluded.score_total,
+                score_breakdown=excluded.score_breakdown,
+                status=excluded.status,
+                skills_meta=excluded.skills_meta,
+                provenance=excluded.provenance
+        """,
+            rows,
+        )
+        conn.commit()
 
     def fetch_all(self) -> List[JobPosting]:
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute("SELECT * FROM jobs")
-            cols = [c[0] for c in cur.description]
-            out = []
-            for r in cur.fetchall():
-                data = dict(zip(cols, r))
-                out.append(self._row_to_job(data))
-            return out
+        cur = self._conn.execute("SELECT * FROM jobs")
+        cols = [c[0] for c in cur.description]
+        out: List[JobPosting] = []
+        for r in cur.fetchall():
+            data = dict(zip(cols, r))
+            out.append(self._row_to_job(data))
+        return out
 
     def fetch_by_id(self, job_id: str) -> JobPosting | None:
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,))
-            row = cur.fetchone()
-            if not row:
-                return None
-            cols = [c[0] for c in cur.description]
-            data = dict(zip(cols, row))
-            return self._row_to_job(data)
+        cur = self._conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        data = dict(zip(cols, row))
+        return self._row_to_job(data)
 
     def update_status(self, job_id: str, status: str):
         import datetime as dt
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,))
-            row = cur.fetchone()
-            prev = row[0] if row else None
-            if prev == status:
-                return  # no-op
-            conn.execute("UPDATE jobs SET status=? WHERE job_id=?", (status, job_id))
-            conn.execute(
-                "INSERT INTO status_history(job_id, from_status, to_status, changed_at) VALUES (?,?,?,?)",
-                (job_id, prev, status, dt.datetime.utcnow().isoformat()+"Z"),
-            )
+        cur = self._conn.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,))
+        row = cur.fetchone()
+        prev = row[0] if row else None
+        if prev == status:
+            return
+        self._conn.execute("UPDATE jobs SET status=? WHERE job_id=?", (status, job_id))
+        self._conn.execute(
+            "INSERT INTO status_history(job_id, from_status, to_status, changed_at) VALUES (?,?,?,?)",
+            (job_id, prev, status, dt.datetime.utcnow().isoformat() + "Z"),
+        )
+        self._conn.commit()
 
     def fetch_history(self, job_id: str, limit: int = 20):
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute(
-                "SELECT from_status, to_status, changed_at FROM status_history WHERE job_id=? ORDER BY id DESC LIMIT ?",
-                (job_id, limit),
-            )
-            return [dict(from_status=r[0], to_status=r[1], changed_at=r[2]) for r in cur.fetchall()]
+        cur = self._conn.execute(
+            "SELECT from_status, to_status, changed_at FROM status_history WHERE job_id=? ORDER BY id DESC LIMIT ?",
+            (job_id, limit),
+        )
+        return [dict(from_status=r[0], to_status=r[1], changed_at=r[2]) for r in cur.fetchall()]
 
     def funnel_metrics(self):
-        """Return basic pipeline funnel counts & conversion ratios.
-
-        stages order: new -> reviewed -> shortlisted -> applied
-        Counts: total jobs currently ever seen, and how many reached each stage at least once.
-        Ratios: reviewed/new, shortlisted/reviewed, applied/shortlisted (float rounded 3dp).
-        """
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute("SELECT COUNT(*) FROM jobs")
-            total = cur.fetchone()[0]
-            # Using history to see if a job ever transitioned INTO a stage (to_status)
-            def count_stage(stage: str):
-                c = conn.execute("SELECT COUNT(DISTINCT job_id) FROM status_history WHERE to_status=?", (stage,)).fetchone()[0]
-                return c
-            reviewed = count_stage('reviewed')
-            shortlisted = count_stage('shortlisted')
-            applied = count_stage('applied')
-            def ratio(a, b):
-                if b == 0:
-                    return 0.0
-                return round(a / b, 3)
-            return {
-                'total_jobs': total,
-                'reviewed': reviewed,
-                'shortlisted': shortlisted,
-                'applied': applied,
-                'review_rate': ratio(reviewed, total),
-                'shortlist_rate': ratio(shortlisted, reviewed),
-                'apply_rate': ratio(applied, shortlisted),
-            }
+        cur = self._conn.execute("SELECT COUNT(*) FROM jobs")
+        total = cur.fetchone()[0]
+        def count_stage(stage: str):
+            return self._conn.execute(
+                "SELECT COUNT(DISTINCT job_id) FROM status_history WHERE to_status=?",
+                (stage,),
+            ).fetchone()[0]
+        reviewed = count_stage("reviewed")
+        shortlisted = count_stage("shortlisted")
+        applied = count_stage("applied")
+        def ratio(a, b):
+            return 0.0 if b == 0 else round(a / b, 3)
+        return {
+            "total_jobs": total,
+            "reviewed": reviewed,
+            "shortlisted": shortlisted,
+            "applied": applied,
+            "review_rate": ratio(reviewed, total),
+            "shortlist_rate": ratio(shortlisted, reviewed),
+            "apply_rate": ratio(applied, shortlisted),
+        }
 
     def update_scores(self, job: JobPosting):
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "UPDATE jobs SET score_total=?, score_breakdown=?, status=?, skills_extracted=?, benefits=?, skills_meta=? WHERE job_id=?",
-                (
-                    job.score_total,
-                    json.dumps(job.score_breakdown) if job.score_breakdown else None,
-                    job.status,
-                    json.dumps(job.skills_extracted) if job.skills_extracted else None,
-                    json.dumps(job.benefits) if job.benefits else None,
-                    json.dumps(job.skills_meta) if job.skills_meta else None,
-                    job.job_id,
-                ),
-            )
+        self._conn.execute(
+            "UPDATE jobs SET score_total=?, score_breakdown=?, status=?, skills_extracted=?, benefits=?, skills_meta=? WHERE job_id=?",
+            (
+                job.score_total,
+                json.dumps(job.score_breakdown) if job.score_breakdown else None,
+                job.status,
+                json.dumps(job.skills_extracted) if job.skills_extracted else None,
+                json.dumps(job.benefits) if job.benefits else None,
+                json.dumps(job.skills_meta) if job.skills_meta else None,
+                job.job_id,
+            ),
+        )
+        self._conn.commit()
 
+    # ----------------------------- row helpers ----------------------------
     def _job_to_row(self, job: JobPosting):
         return (
             job.job_id,
@@ -331,42 +344,45 @@ class JobDB:
             json.dumps(job.score_breakdown) if job.score_breakdown else None,
             job.status,
             json.dumps(job.skills_meta) if job.skills_meta else None,
+            json.dumps(job.provenance) if getattr(job, "provenance", None) else None,
         )
 
     def _row_to_job(self, row: dict) -> JobPosting:
         import datetime as dt
         return JobPosting(
-            job_id=row['job_id'],
-            title=row['title'],
-            company_name=row['company_name'],
-            page_title=row.get('page_title'),
-            company_linkedin_id=row.get('company_linkedin_id'),
-            location=row['location'],
-            work_mode=row['work_mode'],
-            company_name_normalized=row.get('company_name_normalized'),
-            location_normalized=row.get('location_normalized'),
-            location_meta=json.loads(row['location_meta']) if row.get('location_meta') else None,
-            company_map_key=row.get('company_map_key'),
-            normalization_version=row.get('normalization_version'),
-            enrichment_run_at=dt.datetime.fromisoformat(row['enrichment_run_at']) if row.get('enrichment_run_at') else None,
-            geocode_lat=row.get('geocode_lat'),
-            geocode_lon=row.get('geocode_lon'),
-            posted_at=dt.date.fromisoformat(row['posted_at']) if row['posted_at'] else None,
-            collected_at=dt.datetime.fromisoformat(row['collected_at']) if row['collected_at'] else None,
-            employment_type=row['employment_type'],
-            seniority_level=row['seniority_level'],
-            skills_extracted=json.loads(row['skills_extracted']) if row['skills_extracted'] else [],
-            description_raw=row['description_raw'],
-            description_clean=row['description_clean'],
-            apply_method=row['apply_method'],
-            apply_url=row['apply_url'],
-            recruiter_profiles=json.loads(row['recruiter_profiles']) if row['recruiter_profiles'] else [],
-            offered_salary_min=row['offered_salary_min'],
-            offered_salary_max=row['offered_salary_max'],
-            offered_salary_currency=row['offered_salary_currency'],
-            benefits=json.loads(row['benefits']) if row['benefits'] else [],
-            score_total=row['score_total'],
-            score_breakdown=json.loads(row['score_breakdown']) if row['score_breakdown'] else None,
-            status=row['status'],
-            skills_meta=json.loads(row['skills_meta']) if row.get('skills_meta') else None,
+            job_id=row["job_id"],
+            title=row["title"],
+            company_name=row["company_name"],
+            page_title=row.get("page_title"),
+            company_linkedin_id=row.get("company_linkedin_id"),
+            location=row["location"],
+            work_mode=row["work_mode"],
+            company_name_normalized=row.get("company_name_normalized"),
+            location_normalized=row.get("location_normalized"),
+            location_meta=json.loads(row["location_meta"]) if row.get("location_meta") else None,
+            company_map_key=row.get("company_map_key"),
+            normalization_version=row.get("normalization_version"),
+            enrichment_run_at=dt.datetime.fromisoformat(row["enrichment_run_at"]) if row.get("enrichment_run_at") else None,
+            geocode_lat=row.get("geocode_lat"),
+            geocode_lon=row.get("geocode_lon"),
+            posted_at=dt.date.fromisoformat(row["posted_at"]) if row["posted_at"] else None,
+            collected_at=dt.datetime.fromisoformat(row["collected_at"]) if row["collected_at"] else None,
+            employment_type=row["employment_type"],
+            seniority_level=row["seniority_level"],
+            skills_extracted=json.loads(row["skills_extracted"]) if row["skills_extracted"] else [],
+            description_raw=row["description_raw"],
+            description_clean=row["description_clean"],
+            apply_method=row["apply_method"],
+            apply_url=row["apply_url"],
+            recruiter_profiles=json.loads(row["recruiter_profiles"]) if row["recruiter_profiles"] else [],
+            offered_salary_min=row["offered_salary_min"],
+            offered_salary_max=row["offered_salary_max"],
+            offered_salary_currency=row["offered_salary_currency"],
+            benefits=json.loads(row["benefits"]) if row["benefits"] else [],
+            score_total=row["score_total"],
+            score_breakdown=json.loads(row["score_breakdown"]) if row["score_breakdown"] else None,
+            status=row["status"],
+            skills_meta=json.loads(row["skills_meta"]) if row.get("skills_meta") else None,
+            provenance=json.loads(row["provenance"]) if row.get("provenance") else [],
         )
+

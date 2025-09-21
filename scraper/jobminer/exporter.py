@@ -8,13 +8,14 @@ import csv
 from .db import JobDB
 from .comp_norm import load_comp_config, load_benefit_mappings, convert_salary, map_benefits
 from .redaction import load_redaction_config, redact_fields
+from .skill_gap import compute_skill_gaps
 from typing import Dict, Any, Iterable, Optional
 
 # Updated export columns for jobs_full (removed offered_salary_currency, added component scores & matched_skills)
 EXPORT_COLUMNS = [
     'job_id','title','company_name','company_name_normalized','location','location_normalized','work_mode','posted_at','employment_type','seniority_level',
     'offered_salary_min','offered_salary_max','offered_salary_currency','salary_period','salary_is_predicted','salary_heuristic_extracted','offered_salary_min_usd','offered_salary_max_usd','benefits','benefits_normalized',
-    'skill_score','skill_precision','skill_recall','skill_overlap_count','skill_core_size','semantic_score','score_total','matched_skills','status','apply_url','geocode_lat','geocode_lon'
+    'skill_score','skill_precision','skill_recall','skill_overlap_count','skill_core_size','semantic_score','score_total','matched_skills','status','apply_url','geocode_lat','geocode_lon','provenance'
 ]
 
 class Exporter:
@@ -75,12 +76,14 @@ class Exporter:
         rows = []
         rationale_rows = []
         unmatched_resp_rows = []
+        shortlisted_jobs = []
         for j in jobs:
             rows.append(self._job_row(j))
             br = j.score_breakdown or {}
             sm = j.skills_meta or {}
             rationale_rows.append(self._rationale_row(j, br, sm, weights_data, matching_data))
             unmatched_resp_rows.extend(self._unmatched_rows(j, sm))
+        # Build DataFrame & shortlist
         df = pd.DataFrame(rows)
         if 'job_id' in df.columns:
             df['job_id'] = df['job_id'].astype(str)
@@ -95,6 +98,31 @@ class Exporter:
         shortlist = df[(df['score_total'].fillna(0) >= 0.68) | (df['status'].isin(['shortlisted','applied']))]
         shortlist_path = self.export_dir / 'jobs_shortlist.csv'
         shortlist.to_csv(shortlist_path, index=False)
+        # Compute skill gaps (need original objects matching shortlist IDs)
+        shortlist_ids = set(shortlist['job_id'].tolist())
+        shortlisted_jobs = [j for j in jobs if str(j.job_id) in shortlist_ids]
+        # Resume skills available? assume stored in first job.skills_meta['resume_overlap'] union or break out
+        resume_skills = set()
+        for j in shortlisted_jobs:
+            sm = j.skills_meta or {}
+            for s in sm.get('resume_overlap', []) or []:
+                if s:
+                    resume_skills.add(s)
+        details_json_path = None
+        if resume_skills and shortlisted_jobs:
+            gaps = compute_skill_gaps(shortlisted_jobs, resume_skills, min_freq=2)
+            gap_path = self.export_dir / 'skill_gaps.csv'
+            if gaps:
+                pd.DataFrame(gaps).to_csv(gap_path, index=False)
+                # Write detailed JSON preserving numeric types
+                details_json_path = self.export_dir / 'skill_gaps_details.json'
+                try:
+                    with open(details_json_path, 'w', encoding='utf-8') as jf:
+                        json.dump(gaps, jf, ensure_ascii=False, indent=2)
+                except Exception:
+                    details_json_path = None
+        else:
+            gap_path = None
         rationale_path = self.export_dir / 'jobs_rationale.xlsx'
         explanations_csv = self.export_dir / 'jobs_explanations.csv'
         if rationale_rows:
@@ -104,13 +132,15 @@ class Exporter:
                     pd.DataFrame(unmatched_resp_rows).to_excel(writer, sheet_name='unmatched_responsibilities', index=False)
             expl_df = pd.DataFrame(rationale_rows, columns=self.EXPLANATION_COLUMNS)
             expl_df.to_csv(explanations_csv, index=False)
-        return {'full': full_path, 'full_csv': csv_path, 'shortlist': shortlist_path, 'rationale': rationale_path, 'explanations_csv': explanations_csv if rationale_rows else None}
+    return {'full': full_path, 'full_csv': csv_path, 'shortlist': shortlist_path, 'rationale': rationale_path, 'explanations_csv': explanations_csv if rationale_rows else None, 'skill_gaps': gap_path, 'skill_gaps_details': details_json_path}
 
     # -------- Streaming mode --------
     def _export_streaming(self, jobs, weights_data, matching_data):
         full_csv_path = self.export_dir / 'jobs_full.csv'
         shortlist_csv_path = self.export_dir / 'jobs_shortlist.csv'
         explanations_csv_path = self.export_dir / 'jobs_explanations.csv'
+        # collect shortlisted original job objects for skill gap calc
+        shortlisted_original = []
 
         with open(full_csv_path, 'w', newline='', encoding='utf-8') as full_f, \
              open(shortlist_csv_path, 'w', newline='', encoding='utf-8') as short_f, \
@@ -128,13 +158,45 @@ class Exporter:
                 score_total = row.get('score_total') or 0
                 if score_total >= 0.68 or row.get('status') in ('shortlisted','applied'):
                     shortlist_writer.writerow(row)
+                    shortlisted_original.append(j)
                 # explanation row
                 br = j.score_breakdown or {}
                 sm = j.skills_meta or {}
                 explanation_writer.writerow(self._rationale_row(j, br, sm, weights_data, matching_data))
 
         # Return only CSV artifacts in streaming mode
-        return {'full': None, 'full_csv': full_csv_path, 'shortlist': shortlist_csv_path, 'rationale': None, 'explanations_csv': explanations_csv_path}
+        # Resume skills assemble
+        resume_skills = set()
+        for j in shortlisted_original:
+            sm = j.skills_meta or {}
+            for s in sm.get('resume_overlap', []) or []:
+                if s:
+                    resume_skills.add(s)
+        gap_path = None
+        details_json_path = None
+        if resume_skills and shortlisted_original:
+            gaps = compute_skill_gaps(shortlisted_original, resume_skills, min_freq=2)
+            if gaps:
+                gap_path = self.export_dir / 'skill_gaps.csv'
+                with open(gap_path, 'w', newline='', encoding='utf-8') as f:
+                    import csv as _csv
+                    header = ['skill','count','shortlist_pct']
+                    if any('category' in g for g in gaps):
+                        header.append('category')
+                    if any('priority_score' in g for g in gaps):
+                        header.append('priority_score')
+                    writer = _csv.DictWriter(f, fieldnames=header)
+                    writer.writeheader()
+                    for g in gaps:
+                        writer.writerow(g)
+                # JSON details
+                details_json_path = self.export_dir / 'skill_gaps_details.json'
+                try:
+                    with open(details_json_path, 'w', encoding='utf-8') as jf:
+                        json.dump(gaps, jf, ensure_ascii=False, indent=2)
+                except Exception:
+                    details_json_path = None
+        return {'full': None, 'full_csv': full_csv_path, 'shortlist': shortlist_csv_path, 'rationale': None, 'explanations_csv': explanations_csv_path, 'skill_gaps': gap_path, 'skill_gaps_details': details_json_path}
 
     # -------- Helpers --------
     def _job_row(self, j):
@@ -227,6 +289,7 @@ class Exporter:
             'apply_url': j.apply_url or self._fallback_apply_url(j),
             'geocode_lat': getattr(j, 'geocode_lat', None),
             'geocode_lon': getattr(j, 'geocode_lon', None),
+            'provenance': ",".join(j.provenance) if getattr(j, 'provenance', None) else None,
         }
         # Redaction (lazy load config once)
         if not hasattr(self, '_redaction_cfg'):

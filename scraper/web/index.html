@@ -19,6 +19,36 @@
     button[disabled] { background: #9ca3af; cursor: not-allowed; }
     #result { margin-top: 20px; }
     #msg { font-size: 13px; color: #333; }
+    #skill-gaps { margin-top: 28px; }
+    #skill-gaps h2 { margin: 0 0 8px; font-size: 18px; }
+    .gap-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+    .gap-item { background:#f1f5f9; padding:8px 10px; border-radius:6px; display:flex; justify-content:space-between; align-items:center; }
+    .gap-item span.skill { font-weight:600; }
+    .gap-item small { color:#475569; font-size:11px; }
+    .tooltip { position:relative; cursor:help; }
+    .tooltip:hover .tip { opacity:1; transform:translateY(0); pointer-events:auto; }
+    .tip { transition:.18s ease; position:absolute; left:0; top:100%; margin-top:4px; background:#1e293b; color:#fff; padding:6px 8px; border-radius:4px; font-size:11px; width:240px; line-height:1.3; opacity:0; transform:translateY(-4px); pointer-events:none; z-index:10; }
+    /* Recommendations */
+    #recs { margin-top:34px; }
+    #recs h2 { margin:0 0 8px; font-size:18px; }
+    .rec-controls { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin:0 0 10px; }
+    .rec-list { list-style:none; padding:0; margin:0; display:grid; gap:8px; }
+    .rec-item { display:flex; flex-direction:column; gap:4px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; position:relative; }
+    .rec-head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .rec-skill { font-weight:600; font-size:14px; }
+    .badge { font-size:10px; padding:2px 6px; border-radius:4px; background:#e2e8f0; color:#334155; text-transform:uppercase; letter-spacing:.5px; }
+    .badge.blocked { background:#fef3c7; color:#92400e; }
+    .badge.in_progress { background:#dbeafe; color:#1e3a8a; }
+    .badge.planned { background:#e0f2fe; color:#075985; }
+    .badge.achieved { background:#dcfce7; color:#166534; }
+    .rec-meta { font-size:11px; color:#475569; display:flex; flex-wrap:wrap; gap:8px; }
+    .rec-actions { display:flex; gap:6px; flex-wrap:wrap; }
+    .rec-actions button { background:#475569; font-size:11px; padding:6px 8px; }
+    .rec-actions button.secondary { background:#64748b; }
+    .rec-actions button.outline { background:transparent; color:#334155; border:1px solid #cbd5e1; }
+    .hidden { display:none !important; }
+    .small-link { font-size:11px; text-decoration:none; color:#2563eb; }
+    .small-link:hover { text-decoration:underline; }
   </style>
 </head>
 <body>
@@ -110,6 +140,21 @@
       <div class="full" id="result">
         <div id="msg"></div>
       </div>
+      <div class="full" id="skill-gaps" style="display:none;">
+        <h2>Top Missing / High-Impact Skills</h2>
+        <ul class="gap-list" id="gapList"></ul>
+        <p class="hint" id="gapHint"></p>
+      </div>
+      <div class="full" id="recs" style="display:none;">
+        <h2>Adaptive Recommendations</h2>
+        <div class="rec-controls">
+          <label style="font-size:11px; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="hideAchieved" checked /> <span>Hide achieved</span></label>
+          <label style="font-size:11px; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="hideBlocked" /> <span>Hide blocked</span></label>
+          <button type="button" id="refreshRecs" style="background:#334155;">Refresh</button>
+        </div>
+        <ul class="rec-list" id="recList"></ul>
+        <p class="hint" id="recHint">Shift focus to foundational, unblocked skills first; mark progress as you learn.</p>
+      </div>
     </form>
   </div>
 
@@ -118,6 +163,15 @@
     const runBtn = document.getElementById('runBtn');
     const downloadBtn = document.getElementById('downloadBtn');
     const msg = document.getElementById('msg');
+  const gapSection = document.getElementById('skill-gaps');
+  const gapList = document.getElementById('gapList');
+  const gapHint = document.getElementById('gapHint');
+  // Recommendation elements
+  const recSection = document.getElementById('recs');
+  const recList = document.getElementById('recList');
+  const hideAchieved = document.getElementById('hideAchieved');
+  const hideBlocked = document.getElementById('hideBlocked');
+  const refreshRecsBtn = document.getElementById('refreshRecs');
 
     let lastToken = null; // token/id for server-side prepared CSV
 
@@ -146,6 +200,8 @@
         if (lastToken) {
           msg.textContent = 'Results prepared. You can now download the CSV.';
           downloadBtn.disabled = false;
+          fetchSkillGaps();
+          fetchRecommendations();
         } else {
           msg.textContent = 'No results found.';
         }
@@ -161,6 +217,136 @@
       if (!lastToken) return;
       window.location.href = `/api/download?token=${encodeURIComponent(lastToken)}`;
     });
+
+    async function fetchSkillGaps() {
+      gapSection.style.display = 'none';
+      gapList.innerHTML = '';
+      gapHint.textContent = '';
+      try {
+        const res = await fetch('/api/skill_gaps');
+        if (!res.ok) return;
+        const data = await res.json();
+        const gaps = (data && data.gaps) || [];
+        if (!gaps.length) return;
+        gapSection.style.display = '';
+        gaps.slice(0,10).forEach(g => {
+          const li = document.createElement('li');
+            li.className = 'gap-item';
+            const left = document.createElement('span');
+            left.className = 'skill';
+            left.textContent = g.skill;
+            const right = document.createElement('span');
+            const pct = (g.shortlist_pct!=null) ? `${(g.shortlist_pct*100).toFixed(0)}%` : '';
+            const cat = g.category ? g.category : 'uncategorized';
+            const prio = (g.priority_score!=null) ? g.priority_score.toFixed(2) : null;
+            const tip = document.createElement('span');
+            tip.className = 'tooltip';
+            tip.innerHTML = `<small>${pct}</small>`;
+            const details = document.createElement('span');
+            details.className = 'tip';
+            details.textContent = `Appears in ${g.count} shortlisted jobs (${pct}). Category: ${cat}.` + (prio!==null ? ` Priority score: ${prio}.` : '');
+            tip.appendChild(details);
+            right.appendChild(tip);
+            li.appendChild(left);
+            li.appendChild(right);
+            gapList.appendChild(li);
+        });
+        gapHint.textContent = 'Higher priority skills appear in more shortlisted roles and/or weighted categories.';
+      } catch (e) {
+        console.warn('Failed to load skill gaps', e);
+      }
+    }
+
+    refreshRecsBtn.addEventListener('click', fetchRecommendations);
+    hideAchieved.addEventListener('change', applyRecFilters);
+    hideBlocked.addEventListener('change', applyRecFilters);
+
+    async function fetchRecommendations() {
+      recSection.style.display='none';
+      recList.innerHTML='';
+      try {
+        const res = await fetch('/api/skill_recommendations?limit=25');
+        if(!res.ok) return;
+        const data = await res.json();
+        const recs = data.recommendations || [];
+        if(!recs.length) return;
+        recSection.style.display='';
+        recs.forEach(r => recList.appendChild(renderRecommendation(r)));
+        applyRecFilters();
+      } catch(e) { console.warn('Failed to load recommendations', e); }
+    }
+
+    function renderRecommendation(r) {
+      const li = document.createElement('li');
+      li.className='rec-item';
+      li.dataset.skill = r.skill.toLowerCase();
+      if(r.blocked_by) li.dataset.blocked='1';
+      if(r.progress_status) li.dataset.status = r.progress_status;
+
+      const head = document.createElement('div'); head.className='rec-head';
+      const title = document.createElement('div'); title.className='rec-skill'; title.textContent = r.skill;
+      const badges = document.createElement('div'); badges.style.display='flex'; badges.style.gap='4px';
+      // Status badge
+      if(r.progress_status){ badges.appendChild(makeBadge(r.progress_status)); }
+      else { badges.appendChild(makeBadge('new')); }
+      if(r.blocked_by){ const b = makeBadge('blocked'); b.classList.add('blocked'); b.textContent='BLOCKED'; badges.appendChild(b); }
+      head.appendChild(title); head.appendChild(badges);
+
+      const meta = document.createElement('div'); meta.className='rec-meta';
+      if(r.priority_score!=null) meta.appendChild(spanMeta(`prio ${(r.priority_score).toFixed(2)}`));
+      if(r.shortlist_pct!=null) meta.appendChild(spanMeta(`${(r.shortlist_pct*100).toFixed(0)}% shortlist`));
+      if(r.count!=null) meta.appendChild(spanMeta(`${r.count} jobs`));
+      if(r.category) meta.appendChild(spanMeta(r.category));
+      if(r.blocked_by) meta.appendChild(spanMeta('needs: '+r.blocked_by.join(', ')));
+
+      const actions = document.createElement('div'); actions.className='rec-actions';
+      ['planned','in_progress','achieved'].forEach(st => {
+        const btn = document.createElement('button');
+        btn.type='button';
+        btn.className='outline';
+        btn.textContent=st.replace('_',' ');
+        btn.addEventListener('click', () => updateProgress(r.skill, st, li));
+        actions.appendChild(btn);
+      });
+      if(r.resource_url){
+        const link = document.createElement('a'); link.href=r.resource_url; link.target='_blank'; link.rel='noopener'; link.className='small-link'; link.textContent='Resource';
+        actions.appendChild(link);
+      }
+
+      li.appendChild(head); li.appendChild(meta); li.appendChild(actions);
+      if(r.suggested_action){
+        const act = document.createElement('div'); act.style.fontSize='11px'; act.style.color='#334155'; act.textContent=r.suggested_action; li.appendChild(act);
+      }
+      if(r.resume_phrase){
+        const rp = document.createElement('div'); rp.style.fontSize='11px'; rp.style.color='#475569'; rp.style.fontStyle='italic'; rp.textContent='Resume: '+r.resume_phrase; li.appendChild(rp);
+      }
+      return li;
+    }
+
+    function makeBadge(text){
+      const b = document.createElement('span'); b.className='badge'; b.textContent=text.toUpperCase(); return b;
+    }
+    function spanMeta(t){ const s=document.createElement('span'); s.textContent=t; return s; }
+
+    async function updateProgress(skill, status, li){
+      try {
+        const res = await fetch('/api/skill_progress',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({skill, status})});
+        if(!res.ok) return;
+        // re-fetch recommendations for updated ranking
+        fetchRecommendations();
+      } catch(e){ console.warn('progress update failed', e); }
+    }
+
+    function applyRecFilters(){
+      const hideA = hideAchieved.checked; const hideB = hideBlocked.checked;
+      recList.querySelectorAll('.rec-item').forEach(li => {
+        const st = li.dataset.status; const blocked = li.dataset.blocked==='1';
+        let hidden = false;
+        if(hideA && st==='achieved') hidden = true;
+        if(hideB && blocked) hidden = true;
+        li.classList.toggle('hidden', hidden);
+      });
+    }
   </script>
 </body>
 </html>

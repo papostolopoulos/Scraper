@@ -127,24 +127,154 @@ python scraper/scripts/run_ingest.py --config scraper/config/sources.yml
 Future enhancement: provenance merging to consolidate the same job across multiple sources (use canonical apply URL & fuzzy title/company matching) is planned; current behavior is simple union with ID namespacing.
 
 ### Provenance & Cross-Source De-duplication
-When multiple adapters surface the same underlying job the ingestion layer merges them into a single `JobPosting` while tracking a `provenance` list (source names contributing data).
+When multiple adapters surface the same underlying job the ingestion layer merges them into one `JobPosting` and records every contributing source name in `provenance` (sorted list for stability).
 
-Duplicate signature logic (hierarchical):
-1. Non-ATS URL host + path + simplified title (strong uniqueness). If the apply URL host is not a known ATS provider it’s assumed to be a canonical corporate application page and kept distinct.
-2. For known ATS hosts (e.g. Greenhouse, Lever, Workable, SmartRecruiters) or missing URL → fallback to company + simplified title + location fragment. This enables merging the same role that appears on multiple ATS platforms for the same company (e.g., migration period) or across mirrored postings.
+Duplicate detection uses two layers:
+1. Signature (`_dup_signature`) – If the apply URL host is NOT a known ATS host, we build a strong signature from host + path + simplified title (`u:` prefix). Otherwise (ATS host or missing URL) we fall back to `company + simplified title + location` (`c:` prefix) to allow merging the same role that appears on different ATS platforms during transitions.
+2. Coarse grouping – Independently we group by `(company, title, location)` canonicalized. After collecting all sources we union provenance from both the signature bucket and the coarse group ensuring we never lose an earlier source if signatures diverged (rare edge cases).
 
-Merge rules:
-- First encountered job becomes canonical.
-- Additional duplicates append their source name to `provenance`.
-- Longer description replaces a shorter one (preserves richest text for skill extraction).
-- Missing salary fields are filled if a later source provides them.
-- `posted_at` is retained if already set; otherwise earliest available date fills.
+Merge heuristics for duplicates:
+- Canonical record chosen by (a) earlier `posted_at` if both present, then (b) longer `description_raw`.
+- Longer description wins (keeps richest text for skill extraction).
+- Missing salary fields are backfilled from incoming duplicates.
+- `provenance` accumulates all unique source names (seeded at fetch time so early sources survive canonical replacement).
 
-Known ATS host list (heuristic, extend as needed): `boards.greenhouse.io`, `jobs.lever.co`, `workable.com`, `smartrecruiters.com`.
+Known ATS hosts (expand as needed): `boards.greenhouse.io`, `jobs.lever.co`, `workable.com`, `smartrecruiters.com`.
 
-The `job_id` remains that of the first source (already namespaced). This keeps downstream references stable while aggregating data quality. Later improvements considered (not yet implemented): fuzzy company normalization before signature, Jaro-Winkler similarity for title drift, and time-based decay to re-merge after major description edits.
+Resulting `job_id` is that of the first encountered (already namespaced like `gh:123`). This provides a stable key downstream while content enriches via subsequent merges.
 
-CLI visibility (planned flag `--show-provenance`) will enumerate provenance sources during listing. Until then, inspect via direct DB query or full export scripts.
+### Optional Fuzzy Normalization (Company / Title / Location)
+Some duplicate postings differ only by punctuation, corporate suffixes, or minor abbreviation changes (e.g., "Acme, Inc." vs "Acme Inc"; "Sr Data Engineer" vs "Senior Data Engineer"; "San Francisco, CA" vs "San Francisco CA"). An optional pre‑signature normalization step can be enabled to merge these cleanly.
+
+Enable via environment variable (set before running ingestion / scoring):
+```powershell
+$env:JOBMINER_FUZZY_NORMALIZATION='1'
+```
+Disable (default):
+```powershell
+Remove-Item Env:JOBMINER_FUZZY_NORMALIZATION -ErrorAction SilentlyContinue
+```
+
+What it does when enabled:
+1. Company: lowercases, strips punctuation, removes common corporate suffixes (inc, ltd, llc, corp, co, company), collapses extra whitespace.
+2. Title: lowercases, expands common abbreviations (sr -> senior, jr -> junior, eng -> engineer, mgr -> manager, dev -> developer, sw -> software), removes punctuation.
+3. Location: lowercases, removes filler tokens (remote, -, /), normalizes commas/spaces, expands a small map of state abbreviations (ca -> california, ny -> new york, etc.).
+
+These normalized fields are only used for building the duplicate signature; the original strings remain in exports so user‑visible data is untouched.
+
+Before / After Examples (normalization ON):
+| Raw Company | Raw Title | Raw Location | Normalized Signature Tokens |
+|-------------|-----------|--------------|-----------------------------|
+| The Acme, Inc. | Sr Data Eng | San Francisco, CA | acme | senior data engineer | san francisco california |
+| ACME INC | Senior Data Engineer | San Francisco CA | acme | senior data engineer | san francisco california |
+
+Result: Both rows map to the same signature bucket and merge (provenance unions). With normalization OFF they would remain separate.
+
+Safety: Distinct companies that only share a leading token but diverge after (e.g., "Acme Health" vs "Acme Ventures") still produce different normalized company values and will not merge.
+
+Rationale: Improves recall of true duplicates across multi‑source ingestion while keeping default behavior conservative (opt‑in). Determinism is preserved because the normalization is rule‑based (no fuzzy hashing or probabilistic matching) and order‑independent.
+
+Testing: `tests/test_fuzzy_normalization.py` contains:
+- A positive test that variants converge when the flag is on.
+- A negative test that variants diverge when the flag is off.
+- A safeguard test ensuring distinct companies are not falsely merged.
+
+If you toggle the feature mid‑session in a Python REPL, re-import functions that compute signatures to ensure the new setting is picked up (the code dynamically reads settings inside the signature builder, so a fresh function call after changing the env var is typically sufficient when re-running scripts).
+
+Future Extensions: Could optionally add edit distance or Jaro-Winkler similarity for company tokens beyond deterministic rules, gated behind an additional flag (deferred to keep current behavior fully explainable).
+
+### Skill Gap Aggregation (Export Artifact)
+When resume overlap data is present for shortlisted jobs (those meeting the shortlist threshold or explicitly marked), the exporter now produces a `skill_gaps.csv` file alongside other artifacts.
+
+What it shows:
+- skill: a missing skill (not found in your resume overlap list) appearing frequently in shortlisted jobs.
+- count: number of shortlisted jobs containing that skill.
+- shortlist_pct: proportion of shortlisted jobs containing it.
+- category (optional): high‑level bucket if a taxonomy file is present.
+- priority_score (optional): composite score = shortlist_pct * category_weight * avg_shortlisted_job_score (weights from `skill_category_weights.yml`). Higher means higher leverage for closing.
+
+JSON details: A richer `skill_gaps_details.json` is emitted alongside `skill_gaps.csv` containing the full list (not truncated) with raw numeric fields for downstream tooling or UI consumption.
+
+Web UI panel: The MVP web page now displays a "Top Missing / High-Impact Skills" panel after a search, reading from the skill gaps endpoint (`/api/skill_gaps`). Each item shows frequency percentage and a tooltip with count, category, and priority score (if weights active).
+
+### Skill Recommendations Layer
+If `scraper/config/skill_recommendations.yml` exists, an additional endpoint `/api/skill_recommendations` surfaces enriched gap skills with:
+- suggested_action – Concrete next learning or project step.
+- resource_url – Curated documentation or tutorial link.
+- resume_phrase – Template resume bullet you can adapt once you gain experience.
+
+Example config entry:
+```yaml
+airflow:
+    suggested_action: "Complete an Airflow fundamentals tutorial and build a sample DAG scheduling ETL"
+    resource_url: "https://airflow.apache.org/docs/"
+    resume_phrase: "Implemented and scheduled ETL DAGs in Apache Airflow improving data freshness."
+```
+The web UI can consume this endpoint to display actionable guidance (initial implementation returns JSON; UI integration incremental).
+
+### Skill Progression Tracking
+Progress persistence file: `scraper/data/skill_progress.json` (auto-created). Each entry:
+```json
+{
+    "skill": "airflow",
+    "status": "in_progress",      // planned | in_progress | achieved | archived
+    "first_seen": 1737423423,
+    "updated_at": 1737425601,
+    "note": "Completed tutorial, building sample DAG"
+}
+```
+Endpoints:
+- `GET /api/skill_progress` (optional `?status=in_progress` filter)
+- `POST /api/skill_progress` with JSON `{ "skill": "Airflow", "status": "planned", "note": "optional" }`
+- `GET /api/skill_recommendations` now includes `progress_status` & `progress_updated_at` fields when you have started tracking a skill.
+
+Use this to mark learning momentum and hide or reorder achieved skills in future UI enhancements.
+
+### Adaptive Recommendation Ranking
+With `skill_dependencies.yml` present, `/api/skill_recommendations` applies adaptive logic:
+1. Excludes skills already `achieved`.
+2. Marks skills as `blocked_by` unmet prerequisites (prereqs must be `achieved`, not merely `in_progress`).
+3. Sort order preference: unblocked > blocked, then higher `priority_score`, with a slight demotion for `in_progress` skills to encourage breadth before depth.
+
+Example dependency config:
+```yaml
+'airflow advanced':
+    - airflow
+'sql optimization':
+    - sql
+```
+Endpoint response fields (additions):
+- blocked_by: list of unmet prerequisite skills.
+- progress_status / progress_updated_at: current progression state.
+
+This enables incremental pathways: finish foundational skills (achieve), then advanced variants un-block automatically.
+
+### Web UI Recommendations Panel
+After a run, the web UI now displays an "Adaptive Recommendations" panel (if recommendations + gaps exist) that:
+- Lists prioritized, unblocked skills first.
+- Labels each skill with status badges (NEW / PLANNED / IN_PROGRESS / ACHIEVED) and BLOCKED when prerequisites unmet.
+- Provides quick action buttons to set status (planned, in progress, achieved) which triggers an immediate refresh + re-ranking.
+- Offers hide toggles for achieved or blocked skills to focus current learning queue.
+- Shows resource links (if provided) and suggested action + a resume phrase template for future incorporation.
+
+Heuristics:
+- Ignores skills already present in `resume_overlap`.
+- Deduplicates within a single job (skill counted once per job).
+- Filters out extremely rare skills (default min frequency 2) to reduce noise.
+- Deterministic ordering: descending frequency then alphabetical.
+
+Category taxonomy: Provide an optional mapping at `scraper/config/skill_taxonomy.yml` (keys = lowercased skill tokens, values = category strings). Any matching skills receive a `category` column value.
+
+Priority weighting: Define category weights in `scraper/config/skill_category_weights.yml`. Missing categories default to 1.0. If the file exists, `priority_score` is added and the CSV sorted by it (descending). This allows emphasizing strategic categories (e.g., data_engineering over visualization).
+
+Usage: After running export, open `skill_gaps.csv` to identify high-impact additions to your resume or learning plan. This file is generated for both streaming and non-streaming modes when the data conditions are met.
+
+CLI provenance: `python scraper/scripts/job_cli.py list --show-provenance` displays contributing sources. Exports can add this column easily (future enhancement).
+
+Planned refinements (not yet implemented):
+- Fuzzy title/company normalization (Jaro-Winkler) for slight wording drift.
+- Location normalization prior to signature to merge "Remote - US" vs "Remote".
+- Time-decayed re-evaluation when a description substantially changes.
 
 ### Polite Rate Limiting Helper
 Module: `jobminer.util.rate_limit` provides `polite_get()` which enforces a minimal interval per host (default 0.75s) plus jitter and light exponential backoff on 429 / transient 5xx. Adapters can opt-in by swapping `client.get(url)` with `polite_get(url)` to further reduce burstiness. Not enabled globally to avoid altering existing timing expectations silently.
@@ -429,7 +559,7 @@ The current web download ("slim" CSV produced by `/api/jobs/{id}/download`) inte
 Slim CSV columns (in order):
 `title, company_name, location, work_mode, employment_type, posted_at, offered_salary_min, offered_salary_max, offered_salary_currency, salary_period, salary_is_predicted, skill_score, skill_precision, skill_recall, skill_overlap_count, skill_core_size, semantic_score, score_total, matched_skills, apply_url, top_skills`
 
-Future enhancement: a "full" export (already supported by the backend exporter for offline runs) includes additional normalization and provenance fields; when (or if) exposed via the web flow those columns will be re-documented here.
+The separate offline/full export (`jobs_full.csv` / Excel) includes additional normalization fields plus a `provenance` column indicating all contributing source adapters (e.g. `gh,lever`). If/when the web download is expanded those extra columns (including `provenance`) will be surfaced in an updated reference table.
 
 | Column | Description | Notes |
 |--------|-------------|-------|
@@ -454,6 +584,7 @@ Future enhancement: a "full" export (already supported by the backend exporter f
 | matched_skills | Ordered merged skill list | Overlap → extracted → responsibility/semantic additions. |
 | apply_url | Application or fallback URL | Fallback constructed when absent. |
 | top_skills | First 5 matched skills | Convenience subset for quick scan. |
+| provenance (full export only) | Comma-separated source names | Order reflects collection order; empty if single-source. |
 
 Rationale / explanation CSV (`jobs_explanations.csv`) adds: `recency_score`, `seniority_component`, `base_extracted`, `resume_overlap`, `overlap_added`, `semantic_added`, `rationale_text`, and snapshot JSON blobs for `weights`, `thresholds`, and `matching` configuration.
 

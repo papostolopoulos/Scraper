@@ -14,7 +14,7 @@ import time
 import threading
 import concurrent.futures
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 # Internal imports
 from scraper.jobminer.db import JobDB
@@ -29,6 +29,9 @@ from scraper.jobminer.sources.adzuna_source import (
 )
 from scraper.jobminer.sources.remotive_source import RemotiveSource
 from scraper.jobminer.exporter import Exporter
+from scraper.jobminer.skill_recommendations import enrich_gap_skills
+from scraper.jobminer.skill_progress import upsert_progress, list_progress, get_progress_for
+from scraper.jobminer.skill_dependencies import unresolved_prereqs, load_dependencies
 
 app = FastAPI(title="Job Miner Web MVP")
 
@@ -676,6 +679,114 @@ async def download(token: str, request: Request):
 def health():
     _prune_tokens()
     return {"status":"ok","tokens_active": len(TOKENS), "rate_window": RATE_LIMIT_WINDOW, "rate_used": len(LAST_CALLS), "download_ips": len(DOWNLOAD_COUNTS)}
+
+@app.get("/api/skill_gaps")
+def skill_gaps(token: Optional[str] = None, limit: int = 10):
+    """Return prioritized skill gaps (details JSON) for the most recent export.
+
+    Since the async job pipeline currently does not persist a direct mapping from token -> export directory,
+    we heuristically search recent TMP_DIR subdirectories for a skill_gaps_details.json file. If a token is
+    provided we prefer a directory whose name shares prefix with the token (future improvement: persist mapping).
+    """
+    # Sanitize limit
+    try:
+        limit = max(1, min(int(limit), 50))
+    except Exception:
+        limit = 10
+    candidates: List[Path] = []
+    try:
+        for p in TMP_DIR.iterdir():
+            if p.is_dir():
+                details = p / 'skill_gaps_details.json'
+                if details.exists():
+                    candidates.append(details)
+    except Exception:
+        pass
+    if not candidates:
+        return {'gaps': []}
+    # Prefer token prefix match if provided
+    selected = None
+    if token:
+        for d in candidates:
+            if d.parent.name.startswith(token[:8]):  # loose heuristic
+                selected = d; break
+    # Fallback to most recent modified
+    if not selected:
+        selected = max(candidates, key=lambda p: p.stat().st_mtime)
+    try:
+        import json as _json
+        data = _json.loads(selected.read_text(encoding='utf-8'))
+        # Sort by priority_score desc if present
+        if data and isinstance(data, list):
+            if all(isinstance(x, dict) for x in data):
+                if any('priority_score' in x for x in data):
+                    data.sort(key=lambda x: x.get('priority_score', 0), reverse=True)
+        return {'gaps': data[:limit], 'total': len(data), 'source_dir': selected.parent.name}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'Failed to load skill gaps: {e}')
+
+@app.get('/api/skill_recommendations')
+def skill_recommendations(limit: int = 10):
+    """Return enriched skill recommendations for top gap skills (joins recommendations config)."""
+    # Reuse logic by calling skill_gaps (without token heuristic for now)
+    base = skill_gaps(limit=limit)
+    gaps = base.get('gaps', []) if isinstance(base, dict) else []
+    enriched = enrich_gap_skills(gaps, max_items=limit)
+    # Attach progress status if exists
+    progress_map = get_progress_for([g.get('skill','') for g in enriched])
+    # Determine achieved & in_progress sets for adaptive filtering
+    achieved = {k for k,v in progress_map.items() if v.get('status')=='achieved'}
+    in_prog = {k for k,v in progress_map.items() if v.get('status')=='in_progress'}
+    deps = load_dependencies()
+    adaptive = []
+    for item in enriched:
+        sk = (item.get('skill') or '').lower()
+        if sk in progress_map:
+            item['progress_status'] = progress_map[sk].get('status')
+            item['progress_updated_at'] = progress_map[sk].get('updated_at')
+        # Skip achieved (do not recommend again)
+        if sk in achieved:
+            continue
+        unmet = unresolved_prereqs(sk, achieved)
+        if unmet:
+            item['blocked_by'] = unmet
+        adaptive.append(item)
+    # Ranking adjustments:
+    # 1. Unblocked before blocked
+    # 2. Within those, priority_score desc (if present)
+    # 3. Deprioritize in_progress slightly vs planned/untracked
+    def rank_key(it):
+        blocked = 1 if 'blocked_by' in it else 0
+        prio = it.get('priority_score', 0) or 0
+        status = it.get('progress_status')
+        status_penalty = 0.1 if status == 'in_progress' else 0.0
+        return (blocked, -(prio - status_penalty))
+    adaptive.sort(key=rank_key)
+    # Trim to limit
+    adaptive = adaptive[:limit]
+    return {'recommendations': adaptive, 'count': len(adaptive), 'dependencies_loaded': bool(deps)}
+
+@app.get('/api/skill_progress')
+def api_list_skill_progress(status: str | None = None):
+    rows = list_progress(filter_status=status)
+    return {'progress': rows, 'count': len(rows)}
+
+@app.post('/api/skill_progress')
+async def api_upsert_skill_progress(req: Request):
+    try:
+        payload = await req.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail='Invalid JSON body')
+    skill = (payload or {}).get('skill')
+    status = (payload or {}).get('status')
+    note = (payload or {}).get('note')
+    if not skill or not status:
+        raise HTTPException(status_code=400, detail='skill and status required')
+    try:
+        record = upsert_progress(skill, status, note=note)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    return {'progress': record}
 
 @app.get("/api/debug/tokens")
 def debug_tokens():

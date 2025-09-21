@@ -1,7 +1,7 @@
 # Job Miner Project Plan
 
 ## 1. Objective & Reliability Criteria
-**Objective (Updated Sep 19, 2025):** Deliver a simple web experience where a user can upload a resume, enter job search criteria, and download a CSV (capped at 100 roles) ranked against their skills. Preserve determinism, transparency, and ToS compliance while focusing on an MVP path to value.
+**Objective (Updated Sep 20, 2025):** Deliver a simple web experience where a user can upload a resume, enter job search criteria, and download a CSV (capped at 100 roles) ranked against their skills—now with robust multi‑source ingestion (Greenhouse, Lever, Indeed local) and provenance-aware de‑duplication preserving determinism, transparency, and ToS compliance.
 
 **What Success Looks Like:**
 - You can run one command to collect (or ingest) jobs, score them, and export structured outputs (Excel / CSV) any day with consistent runtime and without manual cleanup.
@@ -29,6 +29,12 @@
 | Skill Memory | We keep a growing file of previously analyzed job descriptions and their extracted skills. | Saves time on repeated runs and avoids reprocessing unchanged postings. |
 | Scoring Pipeline | Two‑phase pipeline (extraction pass + IDF‑weighted skill scoring) produces a composite score and exports files. | Improves score discrimination & transparency while remaining deterministic. |
 | Export Outputs | Excel + CSV (or streaming CSV) incl. shortlist, debug skill metrics, salary provenance flag. | Easier sharing, lower memory footprint, improved trust in salary fields. |
+| Greenhouse Adapter | Public board JSON ingestion with normalization & namespaced IDs. | Adds compliant external data source with no credentials needed. |
+| Lever Adapter | Public postings ingestion with section merge and normalization. | Broadens dataset; enables cross-ATS duplicate scenarios. |
+| Provenance Merge | Added `provenance` field + signature & coarse grouping union. | Consolidates duplicates while recording contributing sources. |
+| Cross-ATS Canonical Selection | Earlier posted_at / longer description preference. | Ensures richest unified record for scoring. |
+| Rate Limiting Helper | `polite_get()` per-host pacing + backoff. | Reduces risk of throttling when adding more sources. |
+| CLI Provenance Flag | `--show-provenance` listing support. | Improves transparency for merged jobs. |
 | Database Foundation | Stores job postings with a version tag so we can evolve structure safely. | Keeps historical data and prevents format confusion. |
 | Schema Version Tracking | We record the database layout version and test it. | Early warning if we forget to migrate after changing fields. |
 | Caching (Resume) | The processed resume is cached with a content fingerprint. | Changes to the resume automatically rebuild; unchanged keeps things fast. |
@@ -50,40 +56,53 @@
 | Fast Test Script | One command to run quick subset of tests. | Encourages frequent verification. |
 
 | External Source Adapter (Indeed) | Added a non-scraping loader for local Indeed JSON with normalization and ID namespacing. | Enables safe multi-source ingestion and offline testing without live collection (ToS‑friendly). |
+| Provenance export column + tests | Transparency | Adds explicit provenance column to both streaming & non-streaming exports with tests | Increases trust & traceability for merged records |
+| ResourceWarnings cleanup (DB) | Reliability | Persistent sqlite connection + fixture ensuring deterministic close | Eliminates noisy unclosed connection warnings |
+| Fuzzy normalization toggle | Dedupe Quality | Env-flag gated normalization for company/title/location prior to signature + tests (positive/negative) | Improves duplicate recall without altering default conservative behavior |
+| Skill gap aggregation export | Data Quality | Compute missing frequent skills across shortlisted jobs -> skill_gaps.csv | Guides user on resume improvement / up-skilling |
+| Skill gap taxonomy categories | Data Quality | Optional taxonomy mapping adds category column to skill_gaps.csv | Improves interpretability & planning |
 | Semantic Config Externalization | Introduced `config/semantic.yml` with environment overrides and a `max_new` cap. | Easier tuning, deterministic runs, and safe bounds on enrichment additions. |
 | Semantic Benchmark & Caching | Added benchmark script, seed token caching, and optional embedding of metrics into run summary. | Visibility into enrichment overhead and trend tracking; faster repeated runs. |
 
 ## 3. Remaining Tasks (Updated)
-Grouped by theme (only active / future items retained):
+Updated thematic backlog after provenance integration:
 
 A. Data Quality & Enrichment
-- Optional deeper semantic similarity component benchmarking (currently env‑toggled off by default).
-- Potential second‑pass parallelization (skill weighting already optimized; need measurement first).
+- (Done) Add provenance column to exports (CSV / Excel) + tests.
+- (Done) Fuzzy normalization (company/title/location) toggle before signature.
+- Skill gap aggregation (collect missing skills over shortlisted set).
 
 B. User Experience & Transparency
-- Surface percentage progress + simple ETA in frontend (API now exposes raw counts per phase).
-- Show top skill overlaps (precision/recall) inline for top N jobs.
+- Frontend progress bar & ETA (reuse phase counts).
+- Top matched skills & semantic additions per job (UI toggle).
+- Provenance badges (e.g., GH+Lever) in UI list.
 
 C. Reliability & Monitoring
-- Daily snapshot automation (controlled dataset); persist rolling metrics (avg score, extraction time, skills/job).
-- Lightweight health summary (Markdown) embedding last run timings & cache stats.
+- Daily snapshot automation + weekly summary generation.
+- Health summary Markdown (latest metrics + anomalies).
+- Structured JSON logging (baseline fields).
 
-D. Scaling & Performance
-- Benchmark multi-worker scoring second pass; if useful, expose SCRAPER_SCORE_WORKERS env.
+D. Performance & Scaling
+- Benchmark multi-worker scoring; decide on enabling env variable.
+- Async adapter fetch + polite rate limiting (gather concurrently).
 
-E. Data Governance & Safety
-- Temp artifact retention policy (auto-delete CSV artifacts beyond TTL).
+E. Governance & Safety
+- Export artifact retention TTL purge.
+- Provenance diversity audit (detect dominance).
 
 F. Documentation & Onboarding
-- CSV column reference (debug skill metrics, salary_heuristic_extracted) — pending README addition.
+- CSV column reference (add provenance & signature optional).
+- Adapter authoring guide (contract, rate limiting, tests).
 
 G. Release & Distribution
-- Finalize 1.0.0 release after docs + snapshot tooling.
+- Prep 0.3.x release (multi-source + provenance).
+- Define 1.0 readiness checklist (perf, coverage, UX polish).
 
-H. Optional Stretch
-- Additional API sources beyond Adzuna (plug‑in adapter pattern in place).
-- Resume A/B comparison + differential skill gap analysis.
-- Skill gap recommender (cluster high-interest jobs, aggregate missing skills).
+H. Stretch
+- Additional compliant APIs (Jora / Jooble / Wellfound if permissible).
+- Resume A/B comparison with skill delta matrix.
+- Skill gap recommender (clustering jobs by missing skill sets).
+- Progressive enhancement front-end (htmx or light React).
 
 ## 3a. MVP Definition & Priority Order (Re-scoped for Web UI)
 **MVP Goal:** A local web page (can reuse/extend the existing Job Miner page) that lets a user:
@@ -131,6 +150,11 @@ Notes on compliance: Automated scraping of LinkedIn search results violates Link
 | Quickstart docs | MVP | 2 | 0.5 | Done | Added 5‑minute Quickstart in README |
 | Semantic enrichment toggle | Post-MVP | 7 | 1 | Done | Unified toggle precedence + tests |
 | Dedupe refinement | Post-MVP | 4 | 1 | Done | Added fuzzy title + Jaccard near-duplicate pass |
+| Multi-source provenance merge | Post-MVP | 5 | 3 | Done | Signature + coarse grouping union; deterministic canonical selection |
+| Greenhouse adapter | Post-MVP | 4 | 2 | Done | Public board ingestion |
+| Lever adapter | Post-MVP | 4 | 2 | Done | Public postings ingestion |
+| Rate limiting helper | Reliability | 2 | 0.5 | Done | Polite per-host pacing |
+| CLI provenance visibility | Transparency | 2 | 0.5 | Done | --show-provenance flag |
 | Parallel extraction | Post-MVP | 7 | 2 | Done | ThreadPool + deterministic equivalence tests |
 | Benefit/comp normalization | Later | 5 | 1 | Done | Currency conversion + benefit mapping + tests |
 | Batch export optimization | Later | 3 | 1 | Done | Streaming CSV mode + parity tests |
@@ -182,30 +206,32 @@ For each completed task: `variance = (Actual - Est) / Est`. If variance > +40% t
 11. Coverage HTML + badge artifact.
 12. Pre-commit hooks & fast test script.
 13. Flaky rerun support & limited rerun logic in CI.
+14. Multi-source adapter framework (core + mock + Indeed + loader).
+15. Greenhouse & Lever adapters integrated.
+16. Provenance field + signature & grouping dedupe.
+17. Rate limiting helper & CLI provenance display.
+18. Documentation updates (README + plan) for provenance.
 
 ## 5. Effort Estimate to Reach Completion
 (Assuming one experienced engineer with context; adjust if parallel work possible.)
 
 | Work Area | Est. Hours |
 |-----------|-----------:|
-| Semantic skill enrichment + tests | 6–8 |
-| Benefit/compensation normalization  | 4–6 |
-| Deduplication refinement | 3–5 |
-| Explanations & weighting config validation | 5–7 |
-| Outcome tracking + CLI funnel metrics | 4–6 |
-| Metrics anomaly detection + historical log | 3–4 |
-| Parallel extraction + concurrency guard | 6–8 |
-| Batch export optimization | 3–4 |
-| Anonymization / redaction option | 2–3 |
-| ToS compliance flag & guardrail | 1–2 |
-| Property-based + fuzz tests | 5–7 |
-| Branch coverage increases | 3–4 |
-| Quickstart + architecture doc | 3–4 |
-| Migration playbook doc | 1–2 |
-| Packaging & versioning setup + changelog | 4–5 |
-| Stretch (per item, optional) | 6–12 |
-| Buffer / Integration / Review | 6–8 |
-| TOTAL (without stretch) | ~60–75 |
+| Provenance column export + tests | 2–3 |
+| Fuzzy normalization toggle | 4–6 |
+| Frontend MVP (form + CSV download) | 8–12 |
+| Progress/ETA UI surfacing | 2–3 |
+| Daily snapshot + weekly summary | 3–5 |
+| Health summary & anomaly surfacing | 2–3 |
+| Adapter authoring guide + CSV column doc | 2–3 |
+| Structured logging baseline | 3–4 |
+| Async multi-source fetch (optional) | 5–7 |
+| Provenance diversity audit script | 2–3 |
+| Coverage uplift to ≥85% | 4–5 |
+| Remove debug logging (harden) | 1 |
+| 0.3.x release notes & changelog | 1–2 |
+| Buffer / Integration / Review | 5–6 |
+| TOTAL (next milestone scope) | ~45–55 |
 
 ## 6. Agile Milestones & Definition of Done (DoD)
 
@@ -288,7 +314,7 @@ Prepared: (Generated automatically)
 
 <!-- NEXT_STEP_START -->
 ### Suggested Next Step
-Build the MVP web flow: serve a minimal HTML form (resume upload + required search fields), wire a compliant job source adapter, and return a downloadable CSV (max 100). Document local run steps and API key config.
+Add learning velocity metrics: compute weekly delta of planned->in_progress->achieved counts and expose `/api/skill_progress/metrics` plus a sparkline-ready JSON for future dashboard integration.
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.
@@ -380,4 +406,23 @@ High-level (not executed automatically here):
 - [ ] Resume file ready (<5MB, supported extension)
 - [ ] Form submitted and token received
 - [ ] CSV downloaded successfully
+
+## 12. Fuzzy Normalization Toggle (Design Draft)
+Goal: Improve duplicate recall across heterogeneous source inputs without increasing false merges.
+
+Approach (Phase 1 deterministic rules):
+- Company: lowercase, strip corporate suffixes (inc, corp, ltd, llc, gmbh), remove punctuation & leading 'the ', collapse whitespace.
+- Title: lowercase, expand abbreviations (sr->senior, jr->junior), remove punctuation, collapse whitespace.
+- Location: lowercase, normalize state abbreviations (ca->california), convert st/saint consistently, drop country if redundant, keep city + region.
+
+Toggle: `JOBMINER_FUZZY_NORMALIZATION=1` (env) mapped to settings boolean. Default off (preserves legacy behavior). When on, dedupe signature uses fuzzy-normalized values; raw fields still stored/exported.
+
+Tests:
+- Positive: ('Acme Inc' vs 'Acme, Inc.') merges; provenance union has both sources.
+- Positive: ('Senior Data Eng.' vs 'Sr Data Engineer') merges.
+- Negative: ('Acme Data' vs 'Acme Data Labs') remain distinct.
+
+Risk Mitigation: Maintain minimal stoplist; avoid aggressive stemming; only strip suffix if token count >1.
+
+Acceptance Criteria: Toggle off path unchanged (existing tests green). Toggle on tests pass; no new false merges in current duplicate test suite.
 

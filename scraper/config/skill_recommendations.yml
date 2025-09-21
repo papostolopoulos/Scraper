@@ -1,0 +1,18 @@
+# Mapping of skill -> recommendation metadata
+# Fields:
+#   suggested_action: High-level step user can take next
+#   resource_url: Optional curated learning/reference link
+#   resume_phrase: Optional phrase template to incorporate once skill is acquired/demonstrated
+# You can add more entries or extend fields as needed.
+airflow:
+  suggested_action: "Complete an Airflow fundamentals tutorial and build a sample DAG scheduling ETL"
+  resource_url: "https://airflow.apache.org/docs/"
+  resume_phrase: "Implemented and scheduled ETL DAGs in Apache Airflow improving data freshness."
+terraform:
+  suggested_action: "Deploy a small IaC project (VPC + DB) using Terraform and document modules"
+  resource_url: "https://developer.hashicorp.com/terraform/tutorials"
+  resume_phrase: "Provisioned cloud infrastructure with Terraform (modular code, reusable state)."
+spark:
+  suggested_action: "Build a PySpark job transforming a medium dataset; benchmark and optimize partitions"
+  resource_url: "https://spark.apache.org/docs/latest/"
+  resume_phrase: "Developed distributed data transformations using Spark optimizing shuffle performance."

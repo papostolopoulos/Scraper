@@ -1,0 +1,12 @@
+# Simple skill taxonomy mapping skills to high-level categories.
+# Extend as needed; keys are lowercased skill tokens.
+# Example categories: data_engineering, data_science, infrastructure, visualization, workflow
+python: data_engineering
+airflow: workflow
+spark: data_engineering
+dbt: data_engineering
+pandas: data_science
+power bi: visualization
+lookML: visualization
+kubernetes: infrastructure
+terraform: infrastructure

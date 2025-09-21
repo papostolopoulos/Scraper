@@ -1,0 +1,11 @@
+# skill: list of prerequisite skills (must be achieved first)
+# Example: terraform modules depend on core terraform; airflow advanced depends on airflow basics.
+# Use lowercase skill tokens.
+'spark optimization':
+  - spark
+'airflow advanced':
+  - airflow
+'terraform modules':
+  - terraform
+'sql optimization':
+  - sql

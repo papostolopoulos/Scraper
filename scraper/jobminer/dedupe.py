@@ -19,14 +19,32 @@ from typing import Iterable, Dict, List, Tuple
 from datetime import datetime, timezone
 import re
 from .models import JobPosting
+from .normalization import normalize_company, normalize_title, normalize_location
+import os
 
 TITLE_CLEAN_RE = re.compile(r"[^a-z0-9]+")
 
 def build_signature(job: JobPosting, desc_prefix: int = 0) -> str:
-    company = (job.company_name_normalized or job.company_name or '').lower().strip()
-    location = (job.location_normalized or job.location or '').lower().strip()
-    title = (job.title or '').lower().strip()
-    title_clean = TITLE_CLEAN_RE.sub(' ', title).strip()
+    # Dynamically access settings so tests that reload settings module after
+    # env var changes see updated fuzzy_normalization flag without reloading this module.
+    from . import settings as settings_mod  # local import to pick up reloads
+    # Dynamic flag: environment variable takes precedence for test/runtime toggling.
+    fuzzy_flag = os.getenv('JOBMINER_FUZZY_NORMALIZATION','0').lower() in ('1','true','yes','on')
+    if not fuzzy_flag:
+        # Fall back to settings object (loaded at process start)
+        fuzzy_flag = getattr(settings_mod.SETTINGS, 'fuzzy_normalization', False)
+    if fuzzy_flag:
+        company_raw = job.company_name_normalized or job.company_name or ''
+        location_raw = job.location_normalized or job.location or ''
+        title_raw = job.title or ''
+        company = normalize_company(company_raw)
+        location = normalize_location(location_raw)
+        title_clean = normalize_title(title_raw)
+    else:
+        company = (job.company_name_normalized or job.company_name or '').lower().strip()
+        location = (job.location_normalized or job.location or '').lower().strip()
+        title = (job.title or '').lower().strip()
+        title_clean = TITLE_CLEAN_RE.sub(' ', title).strip()
     parts = [company, location, title_clean]
     if desc_prefix and job.description_clean:
         snippet = job.description_clean[:desc_prefix].lower()
