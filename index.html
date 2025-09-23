@@ -3,7 +3,6 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Job Miner – Web MVP</title>
   <style>
     body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; margin:24px; }
     .container { max-width: 960px; margin:0 auto; }
@@ -20,6 +19,17 @@
     .hint { font-size:12px; color:#555; margin-bottom:20px; }
     footer { margin-top:40px; font-size:11px; color:#666; }
     .env-note { background:#fef3c7; padding:8px 12px; border:1px solid #fcd34d; border-radius:6px; font-size:12px; }
+    .prov-badge { display:inline-flex; align-items:center; background:#e0f2fe; color:#0369a1; padding:2px 6px; border-radius:12px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; }
+    .prov-badge[data-src="adzuna"] { background:#e0f2fe; color:#0369a1; }
+    .prov-badge[data-src="remotive"] { background:#f3e8ff; color:#6b21a8; }
+    .prov-badge[data-src="lever"] { background:#fee2e2; color:#b91c1c; }
+    .prov-badge[data-src="greenhouse"] { background:#dcfce7; color:#15803d; }
+    .prov-badge.more { background:#e5e7eb; color:#374151; cursor:default; }
+    .prov-wrap { display:inline-flex; gap:4px; flex-wrap:wrap; }
+    .filter-bar { display:flex; gap:16px; align-items:center; margin:8px 0 12px; font-size:12px; }
+    .tooltip { position:relative; }
+    .tooltip:hover .tooltip-panel { opacity:1; pointer-events:auto; transform:translate(-50%,4px); }
+    .tooltip-panel { position:absolute; left:50%; top:100%; transform:translate(-50%,10px); background:#111; color:#fff; padding:6px 8px; border-radius:6px; font-size:11px; line-height:1.3; white-space:nowrap; box-shadow:0 4px 12px rgba(0,0,0,.15); opacity:0; pointer-events:none; transition:opacity .15s, transform .15s; z-index:40; }
   </style>
 </head>
 <body>
@@ -27,6 +37,22 @@
     <h1>Job Miner – Web MVP</h1>
   <p class="hint">Upload your resume and enter search criteria. Processing now happens asynchronously – you'll see live status updates and can download when ready.</p>
     <div class="env-note">If this page is served from GitHub Pages the API must run locally or on a deployed host. Set <code>JOBMINER_API_BASE</code> below if auto-detection fails.</div>
+
+    <section id="jobResults" style="display:none;margin:24px 0;">
+      <h2 style="margin:0 0 8px;font-size:18px;">Recent Jobs</h2>
+      <div class="filter-bar">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+          <input type="checkbox" id="multiSourceOnly" /> <span>Show multi-source only</span>
+        </label>
+        <span id="jobCountLabel" style="color:#555;"></span>
+      </div>
+  <div id="jobList" role="list" aria-label="Processed job results" style="border:1px solid #ddd;border-radius:8px;overflow:hidden"></div>
+  <button id="loadMoreJobs" type="button" style="margin-top:8px;display:none;">Load More</button>
+  <div id="jobTelemetry" style="margin-top:4px;font-size:11px;color:#555;display:none;"></div>
+  <div id="jobScrollSentinel" style="height:1px;"></div>
+      <button id="refreshJobsBtn" type="button" style="margin-top:8px;display:none;">Refresh Details</button>
+      <p id="jobDetailsHint" class="hint" style="margin-top:8px;">Expand a job to see top matched, semantic-only, and responsibility-derived (overlap) skills with provenance sources.</p>
+    </section>
 
     <form id="job-form">
       <div class="full">
@@ -127,11 +153,23 @@
   const runBtn = document.getElementById('runBtn');
   const downloadBtn = document.getElementById('downloadBtn');
   const msg = document.getElementById('msg');
+  const jobResults = document.getElementById('jobResults');
+  const jobList = document.getElementById('jobList');
+  const refreshJobsBtn = document.getElementById('refreshJobsBtn');
+  const multiSourceOnly = document.getElementById('multiSourceOnly');
+  const jobCountLabel = document.getElementById('jobCountLabel');
+  const loadMoreBtn = document.getElementById('loadMoreJobs');
+  const telemetryEl = document.getElementById('jobTelemetry');
+  const scrollSentinel = document.getElementById('jobScrollSentinel');
   const apiBaseInput = document.getElementById('api_base');
   const adzunaAppIdInput = document.getElementById('adzuna_app_id');
   const adzunaAppKeyInput = document.getElementById('adzuna_app_key');
   let currentJobId = null;
   let pollTimer = null;
+  let cachedJobs = [];
+  const PAGE_SIZE = 25;
+  let visibleCount = parseInt(localStorage.getItem('JOBMINER_VISIBLE')||String(PAGE_SIZE),10);
+  if(!visibleCount || visibleCount < PAGE_SIZE) visibleCount = PAGE_SIZE;
 
   // Attempt auto base: if served from GitHub Pages assume localhost backend unless overridden
   const defaultBase = 'http://127.0.0.1:8000';
@@ -167,6 +205,7 @@
         downloadBtn.onclick = () => {
           window.location.href = apiBase() + '/api/jobs/' + jobId + '/download';
         };
+        loadJobDetails();
       } else if (j.status === 'error') {
         clearInterval(pollTimer); pollTimer = null; runBtn.disabled = false;
         msg.textContent = 'Error: ' + (j.error || 'Unknown');
@@ -184,6 +223,170 @@
       console.error('poll error', e);
     }
   }
+
+  async function loadJobDetails(){
+    try {
+      const res = await fetch(apiBase() + '/api/job_details?limit=50');
+      if(!res.ok) return;
+      const data = await res.json();
+      cachedJobs = data.jobs || [];
+      if(!cachedJobs.length){ jobResults.style.display='none'; return; }
+      jobResults.style.display='block';
+      refreshJobsBtn.style.display='inline-block';
+      applyFiltersAndRender();
+    } catch(e){ console.warn('job details load failed', e); }
+  }
+
+  function applyFiltersAndRender(){
+    const t0 = performance.now();
+    const showMulti = multiSourceOnly.checked;
+    const jobs = showMulti ? cachedJobs.filter(j => (j.provenance||[]).length > 1) : cachedJobs.slice();
+    const total = jobs.length;
+  if(visibleCount > total) visibleCount = total;
+  const slice = jobs.slice(0, visibleCount);
+    jobCountLabel.textContent = `${slice.length} shown / ${total} filtered (${cachedJobs.length} total)`;
+    const html = slice.map(j => renderJobRow(j)).join('');
+    const tBuild = performance.now();
+    jobList.innerHTML = html;
+    const tDom = performance.now();
+    // Telemetry
+    try {
+      const nodeCount = jobList.querySelectorAll('.job-row').length;
+      telemetryEl.style.display='block';
+      telemetryEl.textContent = `Render: ${(tDom - t0).toFixed(1)} ms (build ${(tBuild - t0).toFixed(1)} ms, paint ${(tDom - tBuild).toFixed(1)} ms) • Rows: ${nodeCount} / ${total}`;
+    } catch(_e){ /* ignore */ }
+    if(slice.length < total){
+      loadMoreBtn.style.display='inline-block';
+      loadMoreBtn.disabled = false;
+      loadMoreBtn.textContent = 'Load More (' + (total - slice.length) + ' remaining)';
+    } else {
+      loadMoreBtn.style.display = total>PAGE_SIZE? 'inline-block':'none';
+      loadMoreBtn.disabled = true;
+      loadMoreBtn.textContent = 'All Loaded';
+    }
+    localStorage.setItem('JOBMINER_VISIBLE', String(visibleCount));
+  }
+
+  function renderJobRow(j){
+    const provFull = j.provenance||[];
+    const shown = provFull.slice(0,3);
+    const hidden = provFull.slice(3);
+    const badges = shown.map(p=>`<span class="prov-badge" data-src="${escapeAttr(p.toLowerCase())}">${escapeHtml(p)}</span>`).join('');
+  const more = hidden.length ? `<span class="prov-badge more tooltip" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-label="Additional sources: ${hidden.map(h=>escapeHtml(h)).join(', ')}">+${hidden.length}<span class="tooltip-panel" role="tooltip">${hidden.map(h=>escapeHtml(h)).join(', ')}</span></span>` : '';
+    return `
+      <div class="job-row" role="listitem" data-jid="${escapeAttr(j.job_id)}" style="border-bottom:1px solid #eee;">
+        <button class="job-toggle" aria-expanded="false" aria-controls="details-${escapeAttr(j.job_id)}" style="all:unset;cursor:pointer;display:block;width:100%;padding:10px 12px;" type="button">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+            <div style="flex:1;">
+              <strong>${escapeHtml(j.title||'Untitled')}</strong> <span style="color:#555;">@ ${escapeHtml(j.company_name||'')}</span>
+              <div style="font-size:11px;color:#666;margin-top:2px;">Score: ${j.score_total!=null?j.score_total.toFixed(2):'—'} ${provFull.length?`<span class="prov-wrap" style="margin-left:8px;">${badges}${more}</span>`:''}</div>
+            </div>
+            <span class="job-arrow" aria-hidden="true" style="font-size:18px;line-height:1;">▸</span>
+          </div>
+        </button>
+        <div class="job-details" id="details-${escapeAttr(j.job_id)}" role="region" aria-label="Skill breakdown for ${escapeAttr(j.title||'job')}" hidden style="padding:0 16px 14px 16px;background:#fafafa;font-size:13px;">
+          <div class="skills-groups" style="display:flex;flex-wrap:wrap;gap:16px;margin-top:10px;">
+            ${renderSkillGroup('Top Matched', j.top_matched, '#2563eb')}
+            ${renderSkillGroup('Semantic Only', j.semantic_only, '#7c3aed')}
+            ${renderSkillGroup('Overlap Added', j.overlap_added, '#059669')}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function renderSkillGroup(label, items, color){
+    items = items || [];
+    if(!items.length) return `<div style="flex:1;min-width:160px;"><div style="font-size:11px;color:#888;">${label}: none</div></div>`;
+    return `<div style="flex:1;min-width:160px;">
+      <div style="font-size:11px;color:${color};font-weight:600;margin-bottom:4px;">${label}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;">${items.map(s=>`<span class="skill-pill" style="background:${color}10;color:${color};padding:3px 6px;border-radius:12px;font-size:11px;">${escapeHtml(s)}</span>`).join('')}</div>
+    </div>`;
+  }
+
+  // Event delegation for toggling job detail sections (click or keyboard)
+  jobList.addEventListener('click', (e)=>{
+    const toggle = e.target.closest('.job-toggle');
+    if(!toggle) return;
+    toggleJob(toggle);
+  });
+
+  // Accessible tooltip handling for provenance overflow badge
+  jobList.addEventListener('focusin', (e)=>{
+    const tipHost = e.target.closest('.prov-badge.more.tooltip');
+    if(tipHost){
+      const panel = tipHost.querySelector('.tooltip-panel');
+      if(panel){ panel.style.opacity='1'; panel.style.pointerEvents='auto'; panel.style.transform='translate(-50%,4px)'; }
+      tipHost.setAttribute('aria-expanded','true');
+    }
+  });
+  jobList.addEventListener('focusout', (e)=>{
+    const tipHost = e.target.closest('.prov-badge.more.tooltip');
+    if(tipHost){
+      const panel = tipHost.querySelector('.tooltip-panel');
+      if(panel){ panel.style.opacity='0'; panel.style.pointerEvents='none'; panel.style.transform='translate(-50%,10px)'; }
+      tipHost.setAttribute('aria-expanded','false');
+    }
+  });
+  jobList.addEventListener('keydown', (e)=>{
+    if(e.key === 'Escape'){
+      const openTip = jobList.querySelector('.prov-badge.more.tooltip[aria-expanded="true"]');
+      if(openTip){
+        const panel = openTip.querySelector('.tooltip-panel');
+        if(panel){ panel.style.opacity='0'; panel.style.pointerEvents='none'; panel.style.transform='translate(-50%,10px)'; }
+        openTip.setAttribute('aria-expanded','false');
+        openTip.blur();
+      }
+    }
+  });
+
+  jobList.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter' || e.key === ' '){
+      const toggle = e.target.closest('.job-toggle');
+      if(toggle){
+        e.preventDefault();
+        toggleJob(toggle);
+      }
+    }
+  });
+
+  function toggleJob(btn){
+    const row = btn.closest('.job-row');
+    const details = row.querySelector('.job-details');
+    const expanded = btn.getAttribute('aria-expanded') === 'true';
+    btn.setAttribute('aria-expanded', String(!expanded));
+    details.hidden = expanded;
+    const arrow = btn.querySelector('.job-arrow');
+    if(arrow) arrow.textContent = expanded ? '▸' : '▾';
+  }
+
+  function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+  function escapeAttr(s){ return escapeHtml(s); }
+
+  refreshJobsBtn.addEventListener('click', ()=>{ loadJobDetails(); });
+  multiSourceOnly.addEventListener('change', ()=>{ localStorage.setItem('JOBMINER_MULTI_SRC_ONLY', multiSourceOnly.checked? '1':'0'); applyFiltersAndRender(); });
+  multiSourceOnly.checked = localStorage.getItem('JOBMINER_MULTI_SRC_ONLY') === '1';
+  if(multiSourceOnly.checked){ visibleCount = PAGE_SIZE; }
+
+  loadMoreBtn.addEventListener('click', ()=>{
+    visibleCount += PAGE_SIZE;
+    applyFiltersAndRender();
+  });
+
+  // Infinite scroll via IntersectionObserver sentinel
+  const io = new IntersectionObserver(entries => {
+    for(const entry of entries){
+      if(entry.isIntersecting){
+        const showMulti = multiSourceOnly.checked;
+        const jobs = showMulti ? cachedJobs.filter(j => (j.provenance||[]).length > 1) : cachedJobs;
+        const total = jobs.length;
+        if(visibleCount < total){
+          visibleCount = Math.min(total, visibleCount + PAGE_SIZE);
+          applyFiltersAndRender();
+        }
+      }
+    }
+  }, { root: null, rootMargin: '100px', threshold: 0 });
+  io.observe(scrollSentinel);
 
   form.addEventListener('submit', async (e)=>{
     e.preventDefault();

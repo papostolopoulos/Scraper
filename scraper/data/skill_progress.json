@@ -1,0 +1,54 @@
+{
+  "skilla": {
+    "skill": "skilla",
+    "status": "achieved",
+    "first_seen": 1758417395,
+    "updated_at": 1758417395,
+    "history": [
+      {
+        "status": "planned",
+        "ts": 1758417395
+      },
+      {
+        "status": "in_progress",
+        "ts": 1758417395
+      },
+      {
+        "status": "achieved",
+        "ts": 1758417395
+      }
+    ]
+  },
+  "skillb": {
+    "skill": "skillb",
+    "status": "achieved",
+    "first_seen": 1758417395,
+    "updated_at": 1758417395,
+    "history": [
+      {
+        "status": "planned",
+        "ts": 1758417395
+      },
+      {
+        "status": "in_progress",
+        "ts": 1758417395
+      },
+      {
+        "status": "achieved",
+        "ts": 1758417395
+      }
+    ]
+  },
+  "skillc": {
+    "skill": "skillc",
+    "status": "planned",
+    "first_seen": 1758417395,
+    "updated_at": 1758417395,
+    "history": [
+      {
+        "status": "planned",
+        "ts": 1758417395
+      }
+    ]
+  }
+}

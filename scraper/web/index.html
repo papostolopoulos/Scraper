@@ -17,6 +17,12 @@
     .actions { margin-top: 16px; display: flex; gap: 12px; }
     button { background: #3b82f6; color: #fff; border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; }
     button[disabled] { background: #9ca3af; cursor: not-allowed; }
+  /* Progress Bar */
+  #progressContainer { display:none; width:100%; margin-top:12px; }
+  .progress-bar-wrap { background:#e2e8f0; border-radius:6px; height:14px; overflow:hidden; position:relative; }
+  .progress-bar { background:linear-gradient(90deg,#3b82f6,#2563eb); height:100%; width:0%; transition:width .35s ease; }
+  .progress-meta { display:flex; justify-content:space-between; font-size:11px; color:#475569; margin-top:4px; }
+  .eta { font-variant-numeric: tabular-nums; }
     #result { margin-top: 20px; }
     #msg { font-size: 13px; color: #333; }
     #skill-gaps { margin-top: 28px; }
@@ -31,6 +37,16 @@
     /* Recommendations */
     #recs { margin-top:34px; }
     #recs h2 { margin:0 0 8px; font-size:18px; }
+  .velocity-bar { display:flex; align-items:center; gap:12px; margin-top:4px; flex-wrap:wrap; }
+  .sparkline-wrap { position:relative; width:160px; height:40px; }
+  .sparkline-wrap svg { width:160px; height:40px; overflow:visible; }
+  .vel-badges { display:flex; gap:8px; align-items:center; }
+  .vel-badge { font-size:10px; padding:3px 6px; border-radius:4px; background:#e2e8f0; color:#334155; font-weight:600; letter-spacing:.3px; }
+  .vel-badge.delta-pos { background:#dcfce7; color:#166534; }
+  .vel-badge.delta-neg { background:#fee2e2; color:#991b1b; }
+  .vel-badge.flat { background:#f1f5f9; color:#475569; }
+  .vel-badge.accel { box-shadow:0 0 0 1px #16a34a inset; }
+  .vel-badge.decel { box-shadow:0 0 0 1px #dc2626 inset; }
     .rec-controls { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin:0 0 10px; }
     .rec-list { list-style:none; padding:0; margin:0; display:grid; gap:8px; }
     .rec-item { display:flex; flex-direction:column; gap:4px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; position:relative; }
@@ -49,6 +65,12 @@
     .hidden { display:none !important; }
     .small-link { font-size:11px; text-decoration:none; color:#2563eb; }
     .small-link:hover { text-decoration:underline; }
+  /* Skeletons */
+  .skeleton { background:linear-gradient(90deg,#f1f5f9 25%,#e2e8f0 37%,#f1f5f9 63%); background-size:400% 100%; animation:skeleton 1.4s ease infinite; border-radius:4px; }
+  @keyframes skeleton { 0% {background-position:100% 0} 100% {background-position:-100% 0} }
+  .gap-skeleton, .rec-skeleton { height:16px; }
+  .gap-skeleton { width:160px; }
+  .rec-skeleton { width:100%; height:54px; border-radius:8px; }
   </style>
 </head>
 <body>
@@ -136,21 +158,43 @@
         <button type="submit" id="runBtn">Search and Prepare CSV</button>
         <button type="button" id="downloadBtn" disabled>Download CSV</button>
       </div>
+      <div class="full" id="progressContainer">
+        <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>
+        <div class="progress-meta"><span id="progressPhase"></span><span class="eta" id="progressEta"></span></div>
+      </div>
 
       <div class="full" id="result">
         <div id="msg"></div>
       </div>
       <div class="full" id="skill-gaps" style="display:none;">
         <h2>Top Missing / High-Impact Skills</h2>
+        <div id="gapSkeletons" style="display:none; display:grid; gap:6px;">
+          <div class="skeleton gap-skeleton"></div>
+          <div class="skeleton gap-skeleton" style="width:120px;"></div>
+          <div class="skeleton gap-skeleton" style="width:180px;"></div>
+        </div>
         <ul class="gap-list" id="gapList"></ul>
         <p class="hint" id="gapHint"></p>
       </div>
       <div class="full" id="recs" style="display:none;">
         <h2>Adaptive Recommendations</h2>
+        <div id="velocityMetrics" class="velocity-bar" style="display:none;">
+          <div class="sparkline-wrap"><svg id="velocitySpark" viewBox="0 0 160 40"></svg></div>
+          <div class="vel-badges">
+            <span id="velLastWeek" class="vel-badge" title="Last full week achieved delta"></span>
+            <span id="velAvg4" class="vel-badge" title="4-week average achieved delta"></span>
+            <span id="velAccel" class="vel-badge" title="Acceleration (last week vs prior avg)"></span>
+          </div>
+        </div>
         <div class="rec-controls">
           <label style="font-size:11px; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="hideAchieved" checked /> <span>Hide achieved</span></label>
           <label style="font-size:11px; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="hideBlocked" /> <span>Hide blocked</span></label>
           <button type="button" id="refreshRecs" style="background:#334155;">Refresh</button>
+        </div>
+        <div id="recSkeletons" style="display:none; display:grid; gap:8px;">
+          <div class="skeleton rec-skeleton"></div>
+          <div class="skeleton rec-skeleton"></div>
+          <div class="skeleton rec-skeleton"></div>
         </div>
         <ul class="rec-list" id="recList"></ul>
         <p class="hint" id="recHint">Shift focus to foundational, unblocked skills first; mark progress as you learn.</p>
@@ -163,15 +207,28 @@
     const runBtn = document.getElementById('runBtn');
     const downloadBtn = document.getElementById('downloadBtn');
     const msg = document.getElementById('msg');
+    // Progress elements
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('progressBar');
+    const progressPhase = document.getElementById('progressPhase');
+    const progressEta = document.getElementById('progressEta');
   const gapSection = document.getElementById('skill-gaps');
   const gapList = document.getElementById('gapList');
+  const gapSkeletons = document.getElementById('gapSkeletons');
   const gapHint = document.getElementById('gapHint');
   // Recommendation elements
   const recSection = document.getElementById('recs');
   const recList = document.getElementById('recList');
+  const recSkeletons = document.getElementById('recSkeletons');
   const hideAchieved = document.getElementById('hideAchieved');
   const hideBlocked = document.getElementById('hideBlocked');
   const refreshRecsBtn = document.getElementById('refreshRecs');
+  // Velocity elements
+  const velocityBar = document.getElementById('velocityMetrics');
+  const sparkEl = document.getElementById('velocitySpark');
+  const velLastWeek = document.getElementById('velLastWeek');
+  const velAvg4 = document.getElementById('velAvg4');
+  const velAccel = document.getElementById('velAccel');
 
     let lastToken = null; // token/id for server-side prepared CSV
 
@@ -193,23 +250,28 @@
 
       runBtn.disabled = true; runBtn.textContent = 'Working…';
       try {
-        const res = await fetch('/api/prepare', { method: 'POST', body: fd });
-        if (!res.ok) throw new Error('Request failed');
-        const data = await res.json();
-        lastToken = data && data.token;
-        if (lastToken) {
-          msg.textContent = 'Results prepared. You can now download the CSV.';
-          downloadBtn.disabled = false;
-          fetchSkillGaps();
-          fetchRecommendations();
+        // Switch to async job endpoint if available else fallback
+        const jobRes = await fetch('/api/jobs', { method:'POST', body: fd });
+        if(jobRes.ok){
+          const jd = await jobRes.json();
+          if(jd.job_id){ startProgressPolling(jd.job_id); }
+          else { throw new Error('No job id returned'); }
         } else {
-          msg.textContent = 'No results found.';
+          // Fallback legacy path
+          const res = await fetch('/api/prepare', { method: 'POST', body: fd });
+          if(!res.ok) throw new Error('Request failed');
+          const data = await res.json();
+          lastToken = data && data.token;
+          if(lastToken){
+            msg.textContent = 'Results prepared. You can now download the CSV.';
+            downloadBtn.disabled = false;
+            fetchSkillGaps(); fetchRecommendations(); fetchVelocityMetrics();
+          } else { msg.textContent = 'No results found.'; }
         }
-      } catch (err) {
-        console.error(err);
-        msg.textContent = 'There was an error preparing results.';
-      } finally {
-        runBtn.disabled = false; runBtn.textContent = 'Search and Prepare CSV';
+      } catch(err){
+        console.error(err); msg.textContent='There was an error preparing results.';
+        runBtn.disabled=false; runBtn.textContent='Search and Prepare CSV';
+        hideProgress();
       }
     });
 
@@ -222,6 +284,7 @@
       gapSection.style.display = 'none';
       gapList.innerHTML = '';
       gapHint.textContent = '';
+      gapSkeletons.style.display='grid';
       try {
         const res = await fetch('/api/skill_gaps');
         if (!res.ok) return;
@@ -254,16 +317,30 @@
         gapHint.textContent = 'Higher priority skills appear in more shortlisted roles and/or weighted categories.';
       } catch (e) {
         console.warn('Failed to load skill gaps', e);
+      } finally {
+        gapSkeletons.style.display='none';
       }
     }
 
+  // Initial metrics attempt (may be empty until user starts tracking skills)
+  fetchVelocityMetrics();
+
     refreshRecsBtn.addEventListener('click', fetchRecommendations);
-    hideAchieved.addEventListener('change', applyRecFilters);
-    hideBlocked.addEventListener('change', applyRecFilters);
+    // Persisted filter preferences
+    try {
+      const storedA = localStorage.getItem('jm_hideAchieved');
+      if(storedA !== null) hideAchieved.checked = storedA === '1';
+      const storedB = localStorage.getItem('jm_hideBlocked');
+      if(storedB !== null) hideBlocked.checked = storedB === '1';
+    } catch(_){}
+
+    hideAchieved.addEventListener('change', () => { try { localStorage.setItem('jm_hideAchieved', hideAchieved.checked ? '1':'0'); } catch(_){}; applyRecFilters(); });
+    hideBlocked.addEventListener('change', () => { try { localStorage.setItem('jm_hideBlocked', hideBlocked.checked ? '1':'0'); } catch(_){}; applyRecFilters(); });
 
     async function fetchRecommendations() {
       recSection.style.display='none';
       recList.innerHTML='';
+      recSkeletons.style.display='grid';
       try {
         const res = await fetch('/api/skill_recommendations?limit=25');
         if(!res.ok) return;
@@ -273,7 +350,10 @@
         recSection.style.display='';
         recs.forEach(r => recList.appendChild(renderRecommendation(r)));
         applyRecFilters();
+        // Refresh metrics after recommendations load
+        fetchVelocityMetrics();
       } catch(e) { console.warn('Failed to load recommendations', e); }
+      finally { recSkeletons.style.display='none'; }
     }
 
     function renderRecommendation(r) {
@@ -290,6 +370,12 @@
       if(r.progress_status){ badges.appendChild(makeBadge(r.progress_status)); }
       else { badges.appendChild(makeBadge('new')); }
       if(r.blocked_by){ const b = makeBadge('blocked'); b.classList.add('blocked'); b.textContent='BLOCKED'; badges.appendChild(b); }
+      // Provenance badges (if provided in future endpoint extension)
+      if(r.provenance){
+        const provs = Array.isArray(r.provenance) ? r.provenance : String(r.provenance).split(/[,;\s]+/).filter(Boolean);
+        provs.slice(0,3).forEach(p => { const pb = makeBadge(p.toLowerCase()); pb.style.background='#f0fdf4'; pb.style.color='#166534'; badges.appendChild(pb); });
+        if(provs.length>3){ const more = makeBadge('+'+(provs.length-3)); more.style.background='#f0fdf4'; more.style.color='#166534'; badges.appendChild(more); }
+      }
       head.appendChild(title); head.appendChild(badges);
 
       const meta = document.createElement('div'); meta.className='rec-meta';
@@ -334,6 +420,7 @@
         if(!res.ok) return;
         // re-fetch recommendations for updated ranking
         fetchRecommendations();
+        // metrics will update via fetchRecommendations chain
       } catch(e){ console.warn('progress update failed', e); }
     }
 
@@ -346,6 +433,159 @@
         if(hideB && blocked) hidden = true;
         li.classList.toggle('hidden', hidden);
       });
+    }
+
+    // ---- Progress Polling ----
+    let progressTimer = null;
+    function startProgressPolling(jobId){
+      progressContainer.style.display='block';
+      progressBar.style.width='0%';
+      progressPhase.textContent='Starting…';
+      progressEta.textContent='--';
+      const started = Date.now();
+      poll();
+      function poll(){
+        fetch(`/api/jobs/${jobId}`).then(r=>r.json()).then(data => {
+          if(data.token){
+            // Completed
+            lastToken = data.token;
+            downloadBtn.disabled=false;
+            msg.textContent='Results prepared. You can now download the CSV.';
+            updateProgressUI(1,'Complete',0);
+            storePhaseDurations(data.timings, started);
+            clearTimeout(progressTimer); runBtn.disabled=false; runBtn.textContent='Search and Prepare CSV';
+            fetchSkillGaps(); fetchRecommendations(); fetchVelocityMetrics();
+            return;
+          }
+          if(data.status==='error'){ msg.textContent='Job failed: '+(data.error||'unknown'); hideProgress(); runBtn.disabled=false; runBtn.textContent='Search and Prepare CSV'; return; }
+          const { pct, phase, etaSec } = computeProgress(data);
+            updateProgressUI(pct, phase, etaSec);
+          progressTimer = setTimeout(poll, 900);
+        }).catch(()=>{ progressTimer=setTimeout(poll,1500); });
+      }
+    }
+    function hideProgress(){ progressContainer.style.display='none'; }
+
+    function updateProgressUI(pct, phase, etaSec){
+      progressBar.style.width = Math.min(100, Math.max(0, pct*100)).toFixed(1)+'%';
+      progressPhase.textContent = phase;
+      progressEta.textContent = etaSec>0 ? formatEta(etaSec) : '';
+    }
+
+    function formatEta(sec){
+      if(sec<1) return '<1s';
+      const m = Math.floor(sec/60), s = Math.round(sec%60);
+      if(m) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
+
+    function computeProgress(job){
+      // Phases inferred from timings keys; fallback weights
+      const phaseOrder = ['resume','collect','score','export'];
+      // Identify completed phases by presence of timing key *or* progress markers
+      let completed = 0; let currentPhase = 'Working…';
+      const t = job.timings || {};
+      for(const ph of phaseOrder){
+        const key = `${ph}_sec`;
+        if(t[key]!=null){ completed++; }
+        else { currentPhase = ph; break; }
+      }
+      if(completed===phaseOrder.length){ return { pct:1, phase:'Complete', etaSec:0}; }
+      const pct = (completed + 0.15) / phaseOrder.length; // crude partial
+      const eta = estimateEta(job, currentPhase, completed, phaseOrder.length);
+      return { pct, phase: currentPhase, etaSec: eta };
+    }
+
+    function estimateEta(job, currentPhase, completedCount, totalPhases){
+      // Use stored historical average per phase from localStorage
+      let store={}; try{ store=JSON.parse(localStorage.getItem('jm_phase_avg')||'{}'); }catch(_){ }
+      const remainingPhases = totalPhases - completedCount;
+      if(remainingPhases<=0) return 0;
+      let est=0;
+      const phaseOrder = ['resume','collect','score','export'];
+      let activeFound=false;
+      for(const ph of phaseOrder){
+        if(!activeFound && ph===currentPhase){ activeFound=true; est += (store[ph]||5)*0.7; continue; }
+        if(activeFound){ est += (store[ph]||5); }
+      }
+      return est;
+    }
+
+    function storePhaseDurations(timings, startedTs){
+      let store={}; try{ store=JSON.parse(localStorage.getItem('jm_phase_avg')||'{}'); }catch(_){ }
+      const phaseOrder = ['resume','collect','score','export'];
+      // Derive from timings differences if available
+      for(const ph of phaseOrder){
+        const key = `${ph}_sec`;
+        if(timings && timings[key]!=null){
+          const v = timings[key];
+          // Exponential moving average
+          const prev = store[ph] || v;
+          store[ph] = Math.round((prev*0.6 + v*0.4)*100)/100;
+        }
+      }
+      try{ localStorage.setItem('jm_phase_avg', JSON.stringify(store)); }catch(_){ }
+    }
+
+    async function fetchVelocityMetrics(){
+      try {
+        const res = await fetch('/api/skill_progress/metrics?weeks=8');
+        if(!res.ok) return;
+        const data = await res.json();
+        const weeks = data.weeks || [];
+        if(!weeks.length) { velocityBar.style.display='none'; return; }
+        velocityBar.style.display='flex';
+        drawSparkline(weeks);
+        updateVelocityBadges(weeks, data.velocity_avg_4w);
+      } catch(e){ console.warn('velocity metrics failed', e); }
+    }
+
+    function drawSparkline(weeks){
+      // Use achieved counts to plot line
+      const counts = weeks.map(w => w.achieved);
+      if(!counts.length){ sparkEl.innerHTML=''; return; }
+      const max = Math.max(...counts);
+      const min = Math.min(...counts);
+      const range = (max-min)||1;
+      const w = 160, h = 40, pad = 4;
+      const step = (w - pad*2) / (counts.length - 1 || 1);
+      let d = '';
+      counts.forEach((c,i) => {
+        const x = pad + i*step;
+        const y = h - pad - ((c-min)/range)*(h-pad*2);
+        d += (i===0? 'M':'L')+x+','+y+' ';
+      });
+      // Fill under line
+      let fillPath = d + 'L ' + (pad + (counts.length-1)*step) + ',' + (h-pad) + ' L ' + pad + ',' + (h-pad) + ' Z';
+      sparkEl.innerHTML = '<path d="'+fillPath+'" fill="rgba(59,130,246,0.15)" stroke="none" />' +
+                          '<path d="'+d.trim()+'" fill="none" stroke="#2563eb" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />';
+    }
+
+    function updateVelocityBadges(weeks, avg4){
+      // Last full week is week before most recent (if >=2 weeks)
+      if(weeks.length < 2){
+        velLastWeek.textContent='Δ n/a'; velAvg4.textContent='4w n/a'; velAccel.textContent='ACC n/a';
+        return;
+      }
+      const last = weeks[weeks.length-1];
+      const prev = weeks[weeks.length-2];
+      const delta = last.achieved_delta; // current achieved_delta relative to previous week cumulative
+      velLastWeek.textContent = 'Δ ' + delta;
+      velLastWeek.className = 'vel-badge ' + (delta>0 ? 'delta-pos': (delta<0 ? 'delta-neg':'flat'));
+      velAvg4.textContent = '4w ' + (avg4!=null ? avg4 : 'n/a');
+      velAvg4.className = 'vel-badge';
+      // Acceleration: compare last delta vs average of previous deltas (excluding current)
+      const priorDeltas = weeks.slice(0,-1).map(w => w.achieved_delta);
+      const priorMean = priorDeltas.length ? (priorDeltas.reduce((a,b)=>a+b,0)/priorDeltas.length) : 0;
+      const accel = delta - priorMean;
+      velAccel.textContent = (accel>=0?'+':'') + accel.toFixed(2);
+      let cls = 'vel-badge';
+      if(accel > 0.5) cls += ' delta-pos accel';
+      else if(accel > 0.05) cls += ' delta-pos';
+      else if(accel < -0.5) cls += ' delta-neg decel';
+      else if(accel < -0.05) cls += ' delta-neg';
+      else cls += ' flat';
+      velAccel.className = cls;
     }
   </script>
 </body>

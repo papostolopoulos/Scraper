@@ -230,6 +230,35 @@ Endpoints:
 
 Use this to mark learning momentum and hide or reorder achieved skills in future UI enhancements.
 
+### Learning Velocity Metrics
+Endpoint: `GET /api/skill_progress/metrics?weeks=8` returns JSON tracking weekly cumulative counts and deltas for the last N weeks (default 8):
+```json
+{
+    "weeks": [
+        {"week_start": "2025-08-04", "planned": 5, "in_progress": 2, "achieved": 1, "archived": 0, "achieved_delta": 1},
+        {"week_start": "2025-08-11", "planned": 6, "in_progress": 2, "achieved": 2, "archived": 0, "achieved_delta": 1}
+    ],
+    "current": {"planned": 7, "in_progress": 3, "achieved": 4, "archived": 0},
+    "velocity_avg_4w": 0.75
+}
+```
+Fields:
+- weeks: Chronological array (oldest → newest) of Monday week starts with cumulative counts at that boundary and the delta in achieved vs previous week.
+- achieved_delta: Week-over-week increase in achieved count.
+- velocity_avg_4w: Average achieved_delta over the last four full weeks (excludes the current partial week), rounded to 2 decimals.
+
+Intended UI Use: A sparkline of achieved count progression and a small badge displaying `+<last_week_delta>` and 4-week moving average. This supports tracking whether learning throughput is accelerating or stalling.
+
+Implementation Notes:
+- History is derived from each skill's `history` list capturing every status transition with a timestamp.
+- Only status changes append to history (idempotent writes with same status are not duplicated).
+- Weeks are aligned to Monday 00:00 UTC for stable comparisons irrespective of local timezone.
+
+Future Enhancements:
+- Per-category velocity (e.g., data_engineering vs visualization) if taxonomy + weights present.
+- Burn-down projection: Estimated weeks to reach a target achieved count at current velocity.
+- Highlight stagnation (no achieved_delta growth for >2 weeks) with a warning flag.
+
 ### Adaptive Recommendation Ranking
 With `skill_dependencies.yml` present, `/api/skill_recommendations` applies adaptive logic:
 1. Excludes skills already `achieved`.

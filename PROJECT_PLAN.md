@@ -63,6 +63,10 @@
 | Skill gap taxonomy categories | Data Quality | Optional taxonomy mapping adds category column to skill_gaps.csv | Improves interpretability & planning |
 | Semantic Config Externalization | Introduced `config/semantic.yml` with environment overrides and a `max_new` cap. | Easier tuning, deterministic runs, and safe bounds on enrichment additions. |
 | Semantic Benchmark & Caching | Added benchmark script, seed token caching, and optional embedding of metrics into run summary. | Visibility into enrichment overhead and trend tracking; faster repeated runs. |
+| Learning Velocity Metrics API & UI | Added /api/skill_progress/metrics + history tracking + sparkline & color-coded delta/avg/acceleration badges | Surfaces progress momentum, enabling acceleration tracking |
+| UI Loading Skeletons | Added animated placeholder skeletons for gaps & recommendations while fetching | Improves perceived performance & reduces layout shift |
+| UI Filter Preference Persistence | Store hide-achieved / hide-blocked preferences in localStorage | Respects user choices across sessions; less friction |
+| Recommendation Provenance Badges | Display source provenance badges (up to 3 + overflow) for future enrichment | Enhances transparency of recommendation origins |
 
 ## 3. Remaining Tasks (Updated)
 Updated thematic backlog after provenance integration:
@@ -70,12 +74,16 @@ Updated thematic backlog after provenance integration:
 A. Data Quality & Enrichment
 - (Done) Add provenance column to exports (CSV / Excel) + tests.
 - (Done) Fuzzy normalization (company/title/location) toggle before signature.
-- Skill gap aggregation (collect missing skills over shortlisted set).
+ - (Done) Skill gap aggregation (collect missing skills over shortlisted set) + taxonomy + priority weighting.
 
 B. User Experience & Transparency
-- Frontend progress bar & ETA (reuse phase counts).
-- Top matched skills & semantic additions per job (UI toggle).
+- (Done) Frontend progress bar & ETA (reuse phase counts).
+- (Done) Top matched skills & semantic additions per job (UI toggle).
 - Provenance badges (e.g., GH+Lever) in UI list.
+ - (Done) Provenance badges (e.g., GH+Lever) in UI list (multi-source badges + overflow tooltip + filter).
+ - (Done) Loading skeletons for gaps & recommendations panels.
+ - (Done) Persist panel filter preferences (localStorage).
+ - (Done) Learning velocity sparkline + delta & average badges.
 
 C. Reliability & Monitoring
 - Daily snapshot automation + weekly summary generation.
@@ -175,6 +183,16 @@ Notes on compliance: Automated scraping of LinkedIn search results violates Link
 | Async job model & polling API | Web | 6 | 3 | Done | Background jobs (/api/jobs) replace blocking prepare; resiliency & UX improvement |
 | Progress metrics in status endpoint | Web | 3 | 1 | Done | Extraction & scoring phase counts exposed for frontend polling |
 | Paging env overrides | Performance | 1 | 0.25 | Done | JOBMINER_MAX_PAGES / JOBMINER_RESULTS_PER_PAGE override dynamic sizing |
+| Skill gap aggregation export | Enrichment | 4 | 1 | Done | Computes shortlist-missing frequent skills -> skill_gaps.csv + JSON details |
+| Skill gap taxonomy categories | Enrichment | 2 | 0.5 | Done | Category mapping via skill_taxonomy.yml added to gaps export |
+| Skill category weighting & priority score | Enrichment | 3 | 0.75 | Done | Weighted priority_score = shortlist_pct * category_weight * avg shortlisted score |
+| Recommendation config + enrichment | Guidance | 4 | 1 | Done | skill_recommendations.yml + enrich_gap_skills + /api/skill_recommendations |
+| Progress tracking persistence & API | Guidance | 5 | 1.5 | Done | skill_progress.json CRUD + /api/skill_progress (GET/POST) |
+| Skill dependencies + adaptive ranking | Guidance | 4 | 1 | Done | dependency loader + blocked prereqs + adaptive ordering logic/tests |
+| UI skill gaps panel | Web UI | 3 | 1 | Done | Added dynamic gaps panel (fetch + category, priority score display) |
+| UI adaptive recommendations panel | Web UI | 4 | 1.25 | Done | Interactive status updates (planned→in_progress→achieved), blocked badges, filtering |
+| UI progress integration | Web UI | 2 | 0.5 | Done | Inline progress updates persisted via POST to /api/skill_progress |
+| UI progress bar & ETA | Web UI | 2 | 0.75 | Done | Determinate bar + phase-based ETA using historical EMA of phase durations (fallback heuristic) |
 
 > Actual Hours: Will be filled when each task completes; variance tracked (+/- %).
 
@@ -314,7 +332,7 @@ Prepared: (Generated automatically)
 
 <!-- NEXT_STEP_START -->
 ### Suggested Next Step
-Add learning velocity metrics: compute weekly delta of planned->in_progress->achieved counts and expose `/api/skill_progress/metrics` plus a sparkline-ready JSON for future dashboard integration.
+Implement retention & alerting: prune old snapshot lines (rolling window configurable), add lightweight email/console alert hooks for anomalies (spikes, zero-job streak, elevated error rate), and document runbook actions for each alert type.
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.

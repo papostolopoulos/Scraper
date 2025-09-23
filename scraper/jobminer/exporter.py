@@ -132,7 +132,7 @@ class Exporter:
                     pd.DataFrame(unmatched_resp_rows).to_excel(writer, sheet_name='unmatched_responsibilities', index=False)
             expl_df = pd.DataFrame(rationale_rows, columns=self.EXPLANATION_COLUMNS)
             expl_df.to_csv(explanations_csv, index=False)
-    return {'full': full_path, 'full_csv': csv_path, 'shortlist': shortlist_path, 'rationale': rationale_path, 'explanations_csv': explanations_csv if rationale_rows else None, 'skill_gaps': gap_path, 'skill_gaps_details': details_json_path}
+        return {'full': full_path, 'full_csv': csv_path, 'shortlist': shortlist_path, 'rationale': rationale_path, 'explanations_csv': explanations_csv if rationale_rows else None, 'skill_gaps': gap_path, 'skill_gaps_details': details_json_path}
 
     # -------- Streaming mode --------
     def _export_streaming(self, jobs, weights_data, matching_data):

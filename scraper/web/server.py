@@ -1,6 +1,7 @@
 from __future__ import annotations
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -30,10 +31,87 @@ from scraper.jobminer.sources.adzuna_source import (
 from scraper.jobminer.sources.remotive_source import RemotiveSource
 from scraper.jobminer.exporter import Exporter
 from scraper.jobminer.skill_recommendations import enrich_gap_skills
-from scraper.jobminer.skill_progress import upsert_progress, list_progress, get_progress_for
+from scraper.jobminer.skill_progress import upsert_progress, list_progress, get_progress_for, compute_velocity_metrics
 from scraper.jobminer.skill_dependencies import unresolved_prereqs, load_dependencies
 
 app = FastAPI(title="Job Miner Web MVP")
+
+# ---------------- Structured Logging & Events ----------------
+import json as _json
+JSON_LOGS_ENABLED = os.getenv("JOBMINER_JSON_LOGS", "1").lower() in ("1","true","yes","on")
+
+# Retention configuration (defaults)
+_SNAPSHOT_MAX_LINES_DEFAULT = 5000
+_SNAPSHOT_MAX_AGE_DAYS_DEFAULT = 7
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        v = int(os.getenv(name, str(default)))
+        return max(1, v)
+    except Exception:
+        return default
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+SNAPSHOT_MAX_LINES = _int_env("JOBMINER_SNAPSHOT_MAX_LINES", _SNAPSHOT_MAX_LINES_DEFAULT)
+SNAPSHOT_MAX_AGE_DAYS = _int_env("JOBMINER_SNAPSHOT_MAX_AGE_DAYS", _SNAPSHOT_MAX_AGE_DAYS_DEFAULT)
+
+# (Threshold envs will be read later in health summary for anomaly detection tuning)
+ANOM_FETCH_SPIKE = _float_env("JOBMINER_ANOM_FETCH_SPIKE", 1.5)
+ANOM_ERROR_RATE = _float_env("JOBMINER_ANOM_ERROR_RATE", 0.3)
+ANOM_ZERO_JOBS_STREAK = _int_env("JOBMINER_ANOM_ZERO_JOBS_STREAK", 3)
+
+def _json_log(**fields):
+    if not JSON_LOGS_ENABLED:
+        return
+    try:
+        base = {
+            'ts': datetime.now(timezone.utc).isoformat(),
+        }
+        base.update(fields)
+        print(_json.dumps(base, default=str), flush=True)
+    except Exception:
+        pass
+
+EVENT_BUFFER_MAX = 200
+EVENTS: list[dict] = []
+EVENTS_LOCK = threading.Lock()
+
+def log_event(kind: str, **payload):
+    rec = {
+        'kind': kind,
+        'ts': datetime.now(timezone.utc).isoformat(),
+    }
+    rec.update(payload)
+    with EVENTS_LOCK:
+        EVENTS.append(rec)
+        if len(EVENTS) > EVENT_BUFFER_MAX:
+            del EVENTS[0:len(EVENTS)-EVENT_BUFFER_MAX]
+    _json_log(event=kind, **payload)
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):  # type: ignore
+        start = time.perf_counter()
+        path = request.url.path
+        method = request.method
+        req_id = uuid.uuid4().hex[:8]
+        _json_log(msg='request_start', request_id=req_id, method=method, path=path)
+        try:
+            response = await call_next(request)
+            status = getattr(response, 'status_code', None)
+        except Exception as e:  # pragma: no cover
+            dur = round((time.perf_counter() - start)*1000, 2)
+            _json_log(msg='request_error', request_id=req_id, method=method, path=path, duration_ms=dur, error=str(e))
+            raise
+        dur = round((time.perf_counter() - start)*1000, 2)
+        _json_log(msg='request_end', request_id=req_id, method=method, path=path, status=status, duration_ms=dur)
+        return response
+
+app.add_middleware(RequestLoggingMiddleware)
 
 # Allow cross-origin requests from GitHub Pages (static hosting) and localhost
 PAGES_ORIGIN = "https://papostolopoulos.github.io"
@@ -117,6 +195,7 @@ EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 def _register_job(j: JobRun):
     with JOBS_LOCK:
         JOBS[j.job_id] = j
+    log_event('job_created', job_id=j.job_id, title=j.params.get('title'))
 
 def _get_job(job_id: str) -> Optional[JobRun]:
     with JOBS_LOCK:
@@ -140,6 +219,7 @@ def _process_job(job: JobRun):
     try:
         params = job.params
         job.status = 'fetching'
+        log_event('job_fetch_start', job_id=job.job_id)
         resume_path: Path = params['resume_path']
         title = params['title']
         location = params['location']
@@ -207,6 +287,7 @@ def _process_job(job: JobRun):
         job.count = len(jobs)
         # DB + scoring
         job.status = 'scoring'
+        log_event('job_scoring_start', job_id=job.job_id, fetched=job.count)
         db = JobDB()
         db.upsert_jobs(jobs)
         seed_path = Path("scraper/config/seed_skills.txt")
@@ -224,6 +305,7 @@ def _process_job(job: JobRun):
         job.timings['scoring_sec'] = round(time.perf_counter() - t_score, 3)
         # Export
         job.status = 'exporting'
+        log_event('job_export_start', job_id=job.job_id)
         export_dir = TMP_DIR / uuid.uuid4().hex
         exporter = Exporter(db, export_dir, stream=True)
         t_export = time.perf_counter()
@@ -270,13 +352,36 @@ def _process_job(job: JobRun):
     except Exception as e:
         job.status = 'error'
         job.error = str(e)
+        log_event('job_error', job_id=job.job_id, error=str(e))
     finally:
         job.timings['total_sec'] = round(time.perf_counter() - t_total, 3)
+        if job.status == 'done':
+            log_event('job_done', job_id=job.job_id, total_sec=job.timings['total_sec'])
         try:
             # Attempt cleanup of resume temp file
             rp = job.params.get('resume_path')
             if rp and Path(rp).exists():
                 Path(rp).unlink(missing_ok=True)
+        except Exception:
+            pass
+        # Persist snapshot (append JSON line) for health summary calculations
+        try:
+            snap_dir = TMP_DIR / 'snapshots'
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            snap_file = snap_dir / 'runs.jsonl'
+            record = {
+                'ts': datetime.now(timezone.utc).isoformat(),
+                'job_id': job.job_id,
+                'status': job.status,
+                'error': job.error,
+                'count': job.count,
+                'limit': job.limit,
+                'timings': job.timings,
+            }
+            with open(snap_file, 'a', encoding='utf-8') as fh:
+                fh.write(_json.dumps(record) + '\n')
+            # Prune snapshot file to enforce retention limits
+            _prune_snapshot_file(snap_file)
         except Exception:
             pass
         _prune_jobs()
@@ -717,33 +822,6 @@ def skill_gaps(token: Optional[str] = None, limit: int = 10):
         import json as _json
         data = _json.loads(selected.read_text(encoding='utf-8'))
         # Sort by priority_score desc if present
-        if data and isinstance(data, list):
-            if all(isinstance(x, dict) for x in data):
-                if any('priority_score' in x for x in data):
-                    data.sort(key=lambda x: x.get('priority_score', 0), reverse=True)
-        return {'gaps': data[:limit], 'total': len(data), 'source_dir': selected.parent.name}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f'Failed to load skill gaps: {e}')
-
-@app.get('/api/skill_recommendations')
-def skill_recommendations(limit: int = 10):
-    """Return enriched skill recommendations for top gap skills (joins recommendations config)."""
-    # Reuse logic by calling skill_gaps (without token heuristic for now)
-    base = skill_gaps(limit=limit)
-    gaps = base.get('gaps', []) if isinstance(base, dict) else []
-    enriched = enrich_gap_skills(gaps, max_items=limit)
-    # Attach progress status if exists
-    progress_map = get_progress_for([g.get('skill','') for g in enriched])
-    # Determine achieved & in_progress sets for adaptive filtering
-    achieved = {k for k,v in progress_map.items() if v.get('status')=='achieved'}
-    in_prog = {k for k,v in progress_map.items() if v.get('status')=='in_progress'}
-    deps = load_dependencies()
-    adaptive = []
-    for item in enriched:
-        sk = (item.get('skill') or '').lower()
-        if sk in progress_map:
-            item['progress_status'] = progress_map[sk].get('status')
-            item['progress_updated_at'] = progress_map[sk].get('updated_at')
         # Skip achieved (do not recommend again)
         if sk in achieved:
             continue
@@ -787,6 +865,162 @@ async def api_upsert_skill_progress(req: Request):
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     return {'progress': record}
+
+@app.get('/api/skill_progress/metrics')
+def api_skill_progress_metrics(weeks: int = 8):
+    try:
+        metrics = compute_velocity_metrics(weeks=weeks)
+        return metrics
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'Failed to compute metrics: {e}')
+
+@app.get('/api/job_details')
+def api_job_details(limit: int = 50, db_path: str | None = None):
+    """Return enriched per-job skill detail for recently processed jobs.
+
+    This surfaces for each job:
+      - job_id, title, company_name, score_total
+      - top_matched: up to 5 highest-weight matched skills (from skills_extracted order)
+      - semantic_added: skills inferred via semantic matching (skills_meta.semantic_added)
+      - overlap_added: responsibility overlap-derived skills (skills_meta.overlap_added)
+
+    We currently don't persist the scoring order separately; we rely on stored skills_extracted order.
+    Future improvement: include per-skill weighting breakdown.
+    """
+    try:
+        lim = max(1, min(int(limit), 200))
+    except Exception:
+        lim = 50
+    db = JobDB(db_path) if db_path else JobDB()
+    jobs = db.fetch_all()
+    # Order by score_total desc if available
+    jobs.sort(key=lambda j: (j.score_total is None, j.score_total or 0), reverse=True)
+    out = []
+    for j in jobs[:lim]:
+        meta = j.skills_meta or {}
+        sem_added = [s.get('skill') for s in (meta.get('semantic_added') or []) if s.get('skill')]
+        overlap_added = [s.get('skill') for s in (meta.get('overlap_added') or []) if s.get('skill')]
+        # Distinguish semantic-only (semantic_added minus any overlap_added duplicates)
+        sem_only = [s for s in sem_added if s not in overlap_added]
+        top_matched = (j.skills_extracted or [])[:5]
+        out.append({
+            'job_id': j.job_id,
+            'title': j.title,
+            'company_name': j.company_name,
+            'score_total': j.score_total,
+            'top_matched': top_matched,
+            'semantic_only': sem_only,
+            'overlap_added': overlap_added,
+            'provenance': j.provenance or []
+        })
+    return {'jobs': out, 'count': len(out)}
+
+@app.get('/api/metrics')
+def api_metrics():
+    """Return lightweight operational metrics for recent jobs & events."""
+    with JOBS_LOCK:
+        jobs_snapshot = list(JOBS.values())
+    counts = { 'total': len(jobs_snapshot) }
+    status_counts: Dict[str,int] = {}
+    fetch_secs = []; score_secs = []; export_secs = []; total_secs = []
+    for jr in jobs_snapshot:
+        status_counts[jr.status] = status_counts.get(jr.status,0)+1
+        t = jr.timings
+        if 'fetch_sec' in t: fetch_secs.append(t['fetch_sec'])
+        if 'scoring_sec' in t: score_secs.append(t['scoring_sec'])
+        if 'export_sec' in t: export_secs.append(t['export_sec'])
+        if 'total_sec' in t: total_secs.append(t['total_sec'])
+    def avg(nums):
+        return round(sum(nums)/len(nums),3) if nums else None
+    with EVENTS_LOCK:
+        events_tail = EVENTS[-25:]
+    metrics = {
+        'jobs': counts,
+        'statuses': status_counts,
+        'avg_fetch_sec': avg(fetch_secs),
+        'avg_scoring_sec': avg(score_secs),
+        'avg_export_sec': avg(export_secs),
+        'avg_total_sec': avg(total_secs),
+        'tokens_active': len(TOKENS),
+        'download_ips': len(DOWNLOAD_COUNTS),
+        'event_tail': events_tail,
+    }
+    return metrics
+
+@app.get('/api/health/summary')
+def api_health_summary(limit: int = 50):
+    """Aggregate recent run snapshots and surface simple anomaly flags.
+
+    Anomalies flagged:
+      - fetch_sec_spike: latest fetch_sec > 1.5 * median previous (where previous >=5 samples)
+      - zero_jobs_streak: >=3 consecutive completed runs with count == 0
+      - error_rate_high: error rate over window > 0.3 with >=5 samples
+    """
+    try:
+        limit = max(5, min(int(limit), 500))
+    except Exception:
+        limit = 50
+    snap_file = TMP_DIR / 'snapshots' / 'runs.jsonl'
+    runs = []
+    if snap_file.exists():
+        try:
+            with open(snap_file, 'r', encoding='utf-8') as fh:
+                for line in fh.readlines()[-limit:]:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        runs.append(_json.loads(line))
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+    total = len(runs)
+    if not runs:
+        return {'runs': 0, 'anomalies': [], 'averages': {}, 'latest': None}
+    # Compute averages for timing keys
+    fetch_vals = [r['timings'].get('fetch_sec') for r in runs if r.get('timings',{}).get('fetch_sec') is not None]
+    score_vals = [r['timings'].get('scoring_sec') for r in runs if r.get('timings',{}).get('scoring_sec') is not None]
+    export_vals = [r['timings'].get('export_sec') for r in runs if r.get('timings',{}).get('export_sec') is not None]
+    total_vals = [r['timings'].get('total_sec') for r in runs if r.get('timings',{}).get('total_sec') is not None]
+    def _avg(v): return round(sum(v)/len(v),3) if v else None
+    def _median(v):
+        if not v: return None
+        sv = sorted(v); n=len(sv); m=n//2
+        return sv[m] if n%2==1 else (sv[m-1]+sv[m])/2
+    anomalies = []
+    # fetch_sec spike
+    if len(fetch_vals) >= 6:
+        latest_fetch = fetch_vals[-1]
+        prev_med = _median(fetch_vals[:-1])
+        if prev_med and latest_fetch and latest_fetch > 1.5 * prev_med:
+            anomalies.append({'type':'fetch_sec_spike','latest': latest_fetch,'prev_median': round(prev_med,3)})
+    # zero jobs streak
+    streak = 0
+    for r in reversed(runs):
+        if r.get('status') == 'done' and (r.get('count') or 0) == 0:
+            streak += 1
+        elif r.get('status') == 'done':
+            break
+    if streak >= 3:
+        anomalies.append({'type':'zero_jobs_streak','length': streak})
+    # error rate
+    errors = sum(1 for r in runs if r.get('status') == 'error')
+    if total >= 5:
+        err_rate = errors / total
+        if err_rate > 0.3:
+            anomalies.append({'type':'error_rate_high','error_rate': round(err_rate,3),'window': total})
+    return {
+        'runs': total,
+        'averages': {
+            'fetch_sec': _avg(fetch_vals),
+            'scoring_sec': _avg(score_vals),
+            'export_sec': _avg(export_vals),
+            'total_sec': _avg(total_vals),
+        },
+        'latest': runs[-1],
+        'anomalies': anomalies,
+    }
 
 @app.get("/api/debug/tokens")
 def debug_tokens():
