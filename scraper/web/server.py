@@ -125,10 +125,13 @@ origins = [
     f"{PAGES_ORIGIN}/Scraper",
     "http://127.0.0.1:8000",
     "http://localhost:8000",
+    "null",  # allow file:// pages (Origin: null) for local HTML testing
 ]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
+    # Allow any localhost/127.0.0.1 port during development
+    allow_origin_regex=r"^https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

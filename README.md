@@ -5,7 +5,10 @@ This repository contains a FastAPI backend for multi-source job ingestion and sc
 ## Quick start
 - Backend (local): launch the API server
   - Python 3.11+ recommended; create a venv and install deps
-  - Run the app: `python -m uvicorn scraper.web.server:app --reload`
+  - Run the app using your venv interpreter (Windows PowerShell):
+    - `.\.venv\Scripts\python.exe -m uvicorn scraper.web.server:app --reload`
+  - If you see "Form data requires python-multipart", make sure dependencies are installed in the same environment you’re using to run uvicorn. From the repo root:
+    - `pip install -e .`
 - UI: open `index.html` in a browser and set the API Base if not `http://127.0.0.1:8000`.
 
 VS Code tasks are included for quick testing and pipeline runs (`.vscode/tasks.json`).

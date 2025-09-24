@@ -332,7 +332,7 @@ DoD:
 - README and architecture diagram reflect final state.
 - All quality gates (lint, type, coverage, flaky policy) pass on release tag.
 
-(Stretch features to be scheduled after core completion or in separate post-MVP epics.)
+(Stretch features to be scheduled after core completion or in separate post-MVP epics.)'];/
 
 ## 7. Governance & Working Agreements
 - Keep flaky tests to an explicit small set; removal required once stabilized.
