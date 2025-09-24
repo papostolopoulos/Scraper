@@ -5,6 +5,7 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build-test:
@@ -46,6 +47,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r scraper/requirements.txt
+          pip install -e .
           pip install mypy ruff pip-audit pytest-rerunfailures coverage
           python -m playwright install --with-deps chromium
 
