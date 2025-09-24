@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\scripts\weekly_summary.py
+# hypothesis_version: 6.140.2
+
+['# Weekly Summary', '+00:00', '--days', '--history', '--json', '--out', 'Key metrics:', 'Top titles:', 'Z', '__main__', 'avg_jobs_total', 'avg_score', 'avg_skills_per_job', 'date_span', 'jobs_total', 'r', 'runs', 'skills_per_job', 'store_true', 'timestamp_utc', 'top_titles', 'utf-8']

@@ -63,8 +63,8 @@ def main():
     ap.add_argument('--enrich-only', action='store_true', help='Run enrichment & (optionally) scoring/export without new collection')
     ap.add_argument('--dedupe-desc-prefix', type=int, default=120, help='Chars of description used in duplicate signature (0 to disable snippet component)')
     ap.add_argument('--history-jsonl', default='pipeline_history.jsonl', help='Append run summary to this JSONL file inside exports dir ("none" to disable)')
-        ap.add_argument('--redact', action='store_true', help='Enable export redaction (emails/phones/urls)')
-        ap.add_argument('--stream-export', action='store_true', help='Enable streaming export mode (skip Excel)')
+    ap.add_argument('--redact', action='store_true', help='Enable export redaction (emails/phones/urls)')
+    ap.add_argument('--stream-export', action='store_true', help='Enable streaming export mode (skip Excel)')
     ap.add_argument('--allow-automation', action='store_true', help='Explicitly allow automated collection (ToS compliance gate)')
     args = ap.parse_args()
 
@@ -211,7 +211,7 @@ def main():
     t_export_start = time.time()
     if not args.no_export:
         from jobminer.exporter import Exporter
-    exporter = Exporter(db, base / 'data' / 'exports', stream=args.stream_export or None, redact=args.redact or None)
+        exporter = Exporter(db, base / 'data' / 'exports', stream=args.stream_export or None, redact=args.redact or None)
         paths = exporter.export_all()
         log_event('pipeline_export_complete', files=len(paths))
         print('Exported files:' if paths else 'No jobs to export')

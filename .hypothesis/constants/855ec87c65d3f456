@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\dedupe.py
+# hypothesis_version: 6.140.2
+
+[0.0, 0.82, 120, '0', '1', '[^a-z0-9]+', 'detect_duplicates', 'duplicate', 'fuzzy_normalization', 'on', 'true', 'yes', '|']

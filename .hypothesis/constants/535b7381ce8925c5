@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\redaction.py
+# hypothesis_version: 6.140.2
+
+['1', '[REDACTED]', 'compiled', 'config', 'email', 'enabled', 'https?://[^\\s]+', 'on', 'phone', 'redact_fields', 'redact_text', 'redaction.yml', 'replacement', 'rules', 'true', 'url', 'utf-8', 'yes']

@@ -7,7 +7,7 @@ from .resume import load_or_build_resume_profile
 from .skills import load_seed_skills, extract_skills, extract_resume_overlap_skills
 from .skill_profile_cache import load_skill_entry, save_skill_entry, purge_old, clear_skills_cache, should_clear_env_flag
 from .benefits import extract_benefits
-from .scoring import aggregate_score, compute_skill_score
+from .scoring import aggregate_score, compute_skill_score, compute_skill_score_detail
 from .weights import load_weights
 from .history import append_history
 from .anomaly import detect_anomalies
@@ -234,7 +234,8 @@ def score_all(
 
     # Phase 2: compute weighted scores
     for idx, j in enumerate(extracted_jobs, start=1):
-        details = compute_skill_score(j.skills_extracted or [], profile.skills, freq_map=freq_map, total_jobs=total_jobs)
+        # Use detail variant so we retain precision/recall metrics in breakdown
+        details = compute_skill_score_detail(j.skills_extracted or [], profile.skills, freq_map=freq_map, total_jobs=total_jobs)
         # Attach debug metrics to breakdown early so aggregate_score can reuse
         j.score_breakdown = j.score_breakdown or {}
         j.score_breakdown.update({
@@ -292,8 +293,11 @@ def score_all(
             # Non-fatal; ignore failures in benchmark embedding
             pass
         try:
-            SETTINGS.metrics_output_path.parent.mkdir(parents=True, exist_ok=True)
-            SETTINGS.metrics_output_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
+            # Re-evaluate output path each invocation to honor runtime env overrides set via tests
+            summary_path_env = os.getenv('SCRAPER_RUN_SUMMARY')
+            summary_path = Path(summary_path_env) if summary_path_env else SETTINGS.metrics_output_path
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception:
             pass
         # Append to historical JSONL

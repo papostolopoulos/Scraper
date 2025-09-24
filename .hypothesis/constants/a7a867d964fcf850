@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\scripts\generate_dashboard.py
+# hypothesis_version: 6.140.2
+
+['+00:00', '--history', '--out', '--weekly', 'T', 'Z', '__DATA_JSON__', '__HIGHLIGHTS_JSON__', '__UPDATED__', '__WEEKLY_HTML__', '__main__', 'avg_score', 'd_avg_score', 'd_jobs_total', 'd_skills_per_job', 'date', 'jobs_total', 'labels', 'r', 'skills_per_job', 'timestamp_utc', 'utf-8']

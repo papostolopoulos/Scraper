@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\settings.py
+# hypothesis_version: 6.140.2
+
+[0.6, 1.0, 1.2, 2.5, 500, '0', '1', 'SCRAPER_POLITE_MAX', 'SCRAPER_POLITE_MIN', 'SCRAPER_RUN_SUMMARY', 'TRUE', 'config', 'on', 'runtime.yml', 'true', 'utf-8', 'yes']

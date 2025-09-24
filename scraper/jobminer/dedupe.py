@@ -23,6 +23,9 @@ from .normalization import normalize_company, normalize_title, normalize_locatio
 import os
 
 TITLE_CLEAN_RE = re.compile(r"[^a-z0-9]+")
+_STOPWORDS = {
+    'the','and','for','a','an','of','to','in','on','at','by','with','across','from','into','over','under','as','is','are'
+}
 
 def build_signature(job: JobPosting, desc_prefix: int = 0) -> str:
     # Dynamically access settings so tests that reload settings module after
@@ -52,7 +55,16 @@ def build_signature(job: JobPosting, desc_prefix: int = 0) -> str:
     return "|".join(parts)
 
 def _tokenize(text: str) -> List[str]:
-    return [t for t in TITLE_CLEAN_RE.sub(' ', (text or '').lower()).split() if t]
+    raw = [t for t in TITLE_CLEAN_RE.sub(' ', (text or '').lower()).split() if t]
+    norm: List[str] = []
+    for t in raw:
+        if t in _STOPWORDS:
+            continue
+        # Simple plural normalization: drop trailing 's' for longer words
+        if len(t) > 4 and t.endswith('s'):
+            t = t[:-1]
+        norm.append(t)
+    return norm
 
 def _jaccard(a: List[str], b: List[str]) -> float:
     if not a or not b:
@@ -98,16 +110,21 @@ def detect_duplicates(
     # Collect buckets for optional similarity pass
     buckets: Dict[Tuple[str,str], List[JobPosting]] = {}
     for job in jobs_sorted:
+        # Always add to similarity buckets keyed by company/location
+        comp = (job.company_name_normalized or job.company_name or '').lower().strip()
+        loc = (job.location_normalized or job.location or '').lower().strip()
+        buckets.setdefault((comp, loc), []).append(job)
+        # Deterministic signature check: optionally skip when relying purely on similarity
+        if enable_similarity and desc_prefix == 0:
+            # Skip deterministic pass to allow similarity thresholds to govern behavior
+            continue
+        # Otherwise run deterministic signature pass
         sig = build_signature(job, desc_prefix=desc_prefix)
         if not sig.strip():
             continue
         first = sig_first.get(sig)
         if first is None:
             sig_first[sig] = job
-            # bucket key without title/desc to allow near duplicate within company/location
-            comp = (job.company_name_normalized or job.company_name or '').lower().strip()
-            loc = (job.location_normalized or job.location or '').lower().strip()
-            buckets.setdefault((comp, loc), []).append(job)
             continue
         # If same signature and not already duplicate
         if job.status != 'duplicate':
@@ -116,10 +133,17 @@ def detect_duplicates(
     if not enable_similarity:
         return dup_count
     # Secondary pass: near duplicates
+    # Title similarity function (use rapidfuzz if available; else fallback to difflib ratio)
     try:
-        from rapidfuzz import fuzz
-    except ImportError:
-        return dup_count  # silently skip
+        from rapidfuzz import fuzz as _rf_fuzz  # type: ignore
+        def _title_score(a_t: str, b_t: str) -> int:
+            return int(_rf_fuzz.partial_ratio(a_t, b_t))
+    except Exception:
+        import difflib as _difflib
+        def _title_score(a_t: str, b_t: str) -> int:
+            if a_t == b_t:
+                return 100
+            return int(100 * _difflib.SequenceMatcher(None, a_t, b_t).ratio())
     for (comp, loc), bucket in buckets.items():
         if len(bucket) < 2:
             continue
@@ -134,7 +158,7 @@ def detect_duplicates(
                 if b.status == 'duplicate':
                     continue
                 # Title fuzzy
-                tf = fuzz.partial_ratio((a.title or '').lower(), (b.title or '').lower())
+                tf = _title_score((a.title or '').lower(), (b.title or '').lower())
                 if tf < title_fuzzy_min:
                     continue
                 jac = _jaccard(tokens_a, _tokenize(b.description_clean or ''))
@@ -144,7 +168,6 @@ def detect_duplicates(
                     if later.status != 'duplicate':
                         later.status = 'duplicate'
                         dup_count += 1
-    return dup_count
     return dup_count
 
 __all__ = ['detect_duplicates']

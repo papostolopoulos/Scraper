@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\scripts\benchmark_semantic.py
+# hypothesis_version: 6.140.2
+
+[0.0, '--limit', '__main__', 'avg_added_semantic', 'avg_skills_heuristic', 'avg_skills_semantic', 'aws', 'base_extracted', 'bigrams', 'etl', 'heuristic_time_s', 'kubernetes', 'max_new', 'pandas', 'python', 'sampled_jobs', 'semantic_time_s', 'skills_meta', 'spark', 'speed_ratio', 'sql', 'threshold', 'total_jobs', 'utf-8']

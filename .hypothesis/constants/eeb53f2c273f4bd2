@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\sources\greenhouse_source.py
+# hypothesis_version: 6.140.2
+
+[20.0, 200, '+00:00', '-', 'Accept', 'Z', 'absolute_url', 'application/json', 'categories', 'content', 'descriptionHtml', 'descriptionPlain', 'external', 'hostedUrl', 'id', 'internal_job_id', 'jobs', 'location', 'metadata', 'name', 'offices', 'sources.greenhouse', 'text', 'title', 'updated_at', 'value']

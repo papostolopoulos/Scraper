@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\semantic_enrich.py
+# hypothesis_version: 6.140.2
+
+[0.0, 0.32, '1', 'SemanticEnricher', '[a-zA-Z0-9+.#-]+', '_', '_seed_cache', 'config', 'enable_bigrams', 'max_new', 'on', 'semantic.yml', 'similarity_threshold', 'true', 'utf-8', 'yes']

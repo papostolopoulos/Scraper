@@ -30,6 +30,14 @@
     .tooltip { position:relative; }
     .tooltip:hover .tooltip-panel { opacity:1; pointer-events:auto; transform:translate(-50%,4px); }
     .tooltip-panel { position:absolute; left:50%; top:100%; transform:translate(-50%,10px); background:#111; color:#fff; padding:6px 8px; border-radius:6px; font-size:11px; line-height:1.3; white-space:nowrap; box-shadow:0 4px 12px rgba(0,0,0,.15); opacity:0; pointer-events:none; transition:opacity .15s, transform .15s; z-index:40; }
+    /* Health badge */
+    .health-area { display:flex; align-items:center; gap:8px; margin:10px 0 18px; }
+    .health-badge { display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid transparent; }
+    .health-badge.ok { background:#ecfdf5; color:#065f46; border-color:#a7f3d0; }
+    .health-badge.warn { background:#fffbeb; color:#92400e; border-color:#fde68a; }
+    .health-badge.err { background:#fef2f2; color:#991b1b; border-color:#fecaca; }
+    .health-btn { background:#6b7280; color:#fff; border:none; border-radius:6px; padding:6px 10px; cursor:pointer; font-size:12px; }
+    .health-panel { border:1px solid #e5e7eb; background:#fafafa; border-radius:8px; padding:10px; font-size:12px; color:#374151; }
   </style>
 </head>
 <body>
@@ -37,6 +45,12 @@
     <h1>Job Miner – Web MVP</h1>
   <p class="hint">Upload your resume and enter search criteria. Processing now happens asynchronously – you'll see live status updates and can download when ready.</p>
     <div class="env-note">If this page is served from GitHub Pages the API must run locally or on a deployed host. Set <code>JOBMINER_API_BASE</code> below if auto-detection fails.</div>
+
+    <div id="healthArea" class="health-area" aria-live="polite">
+      <span id="healthBadge" class="health-badge">Health: —</span>
+      <button id="healthToggle" type="button" class="health-btn" aria-controls="healthPanel" aria-expanded="false">Details</button>
+    </div>
+    <div id="healthPanel" class="health-panel" hidden></div>
 
     <section id="jobResults" style="display:none;margin:24px 0;">
       <h2 style="margin:0 0 8px;font-size:18px;">Recent Jobs</h2>
@@ -182,6 +196,94 @@
     localStorage.setItem('JOBMINER_API_BASE', v);
     return v.replace(/\/$/, '');
   }
+
+  // Health badge wiring
+  const healthBadge = document.getElementById('healthBadge');
+  const healthPanel = document.getElementById('healthPanel');
+  const healthToggle = document.getElementById('healthToggle');
+  let healthTimer = null;
+
+  function setHealthBadge(state, label){
+    healthBadge.classList.remove('ok','warn','err');
+    healthBadge.classList.add(state);
+    healthBadge.textContent = label;
+  }
+
+  async function refreshHealth(){
+    try {
+      const res = await fetch(apiBase() + '/api/health/summary');
+      if(!res.ok){ throw new Error('status ' + res.status); }
+      const j = await res.json();
+      const anomalies = (j && j.anomalies) || [];
+      if(anomalies.length === 0){
+        setHealthBadge('ok', 'Health: OK');
+      } else {
+        // Heuristic: if any anomaly mentions error, show error styling
+        const txt = JSON.stringify(anomalies).toLowerCase();
+        const cls = (txt.includes('error')) ? 'err' : 'warn';
+        setHealthBadge(cls, `Health: ${cls === 'err' ? 'Issues' : 'Warnings'} (${anomalies.length})`);
+      }
+      // Panel details (structured)
+      const latest = (j && j.latest) || {};
+      const avgs = (j && j.averages) || {};
+      const timings = latest.timings || {};
+      const fmtSec = (x)=> (x==null? '—' : `${Number(x).toFixed(2)}s`);
+      const asList = (obj)=> Object.keys(obj||{}).length
+        ? `<ul style="margin:6px 0 0 18px;">${Object.entries(obj).map(([k,v])=>`<li><span style="color:#6b7280;">${escapeHtml(k)}:</span> ${escapeHtml(String(v))}</li>`).join('')}</ul>`
+        : '<div style="color:#666;">None</div>';
+      const anomaliesList = anomalies.length
+        ? `<ul style="margin:6px 0 0 18px;">${anomalies.map(a=>{
+              if(typeof a==='string') return `<li>${escapeHtml(a)}</li>`;
+              const t = a.type || 'anomaly';
+              const rest = Object.assign({}, a); delete rest.type;
+              return `<li><strong>${escapeHtml(t)}</strong>${Object.keys(rest).length? ': '+escapeHtml(JSON.stringify(rest)) : ''}</li>`;
+            }).join('')}</ul>`
+        : '<div style="color:#666;">None</div>';
+      healthPanel.innerHTML = `
+        <div style="display:flex; gap:16px; flex-wrap:wrap;">
+          <div>
+            <strong>Latest run</strong>
+            <div style="color:#6b7280;">${escapeHtml(latest.ts || '—')}</div>
+            <div>Status: <strong>${escapeHtml(latest.status || '—')}</strong>${latest.error? ` <span style="color:#991b1b;">(${escapeHtml(latest.error)})</span>`:''}</div>
+            <div>Jobs found: <strong>${latest.count==null? '—' : escapeHtml(String(latest.count))}</strong></div>
+            <div style="margin-top:4px;">
+              <span style="color:#6b7280;">Timings:</span>
+              <ul style="margin:6px 0 0 18px;">
+                <li>fetch: ${fmtSec(timings.fetch_sec)}</li>
+                <li>scoring: ${fmtSec(timings.scoring_sec)}</li>
+                <li>export: ${fmtSec(timings.export_sec)}</li>
+                <li>total: ${fmtSec(timings.total_sec)}</li>
+              </ul>
+            </div>
+          </div>
+          <div>
+            <strong>Averages (${escapeHtml(String(j.runs||0))} runs)</strong>
+            <ul style="margin:6px 0 0 18px;">
+              <li>fetch: ${fmtSec(avgs.fetch_sec)}</li>
+              <li>scoring: ${fmtSec(avgs.scoring_sec)}</li>
+              <li>export: ${fmtSec(avgs.export_sec)}</li>
+              <li>total: ${fmtSec(avgs.total_sec)}</li>
+            </ul>
+          </div>
+        </div>
+        <div style="margin-top:8px;"><strong>Anomalies</strong>${anomaliesList}</div>
+      `;
+    } catch(e){
+      setHealthBadge('err', 'Health: API unreachable');
+      healthPanel.innerHTML = '<div style="color:#991b1b;">Unable to reach /api/health/summary. Check that the API is running and CORS allows this origin.</div>';
+    }
+  }
+
+  if(healthToggle){
+    healthToggle.addEventListener('click', ()=>{
+      const isHidden = healthPanel.hasAttribute('hidden');
+      if(isHidden){ healthPanel.removeAttribute('hidden'); healthToggle.setAttribute('aria-expanded','true'); }
+      else { healthPanel.setAttribute('hidden',''); healthToggle.setAttribute('aria-expanded','false'); }
+    });
+  }
+  // Kick off initial fetch and periodic refresh
+  refreshHealth();
+  healthTimer = setInterval(refreshHealth, 30000);
 
   async function startJob(fd){
     const res = await fetch(apiBase() + '/api/jobs', { method:'POST', body: fd });

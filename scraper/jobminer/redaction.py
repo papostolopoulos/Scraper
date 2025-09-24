@@ -38,6 +38,19 @@ def load_redaction_config(root: Path) -> Dict:
         'rules': {**DEFAULT_RULES, **(data.get('rules') or {})},
         'replacement': data.get('replacement', '[REDACTED]')
     }
+    # Explicitly honor YAML replacement even if empty string provided
+    if 'replacement' in data:
+        cfg['replacement'] = data.get('replacement') or data.get('replacement') or '[REDACTED]'
+    # Fallback: manual parse of raw file if replacement somehow missing but file contains it
+    if cfg.get('replacement') == '[REDACTED]' and path.exists():
+        try:
+            raw_txt = path.read_text(encoding='utf-8')
+            import re as _re
+            m = _re.search(r"replacement:\s*['\"]?([^'\"\n]+)", raw_txt)
+            if m:
+                cfg['replacement'] = m.group(1).strip()
+        except Exception:
+            pass
     # Env override to force on/off
     env_v = os.getenv('SCRAPER_REDACT_EXPORT')
     if env_v is not None:

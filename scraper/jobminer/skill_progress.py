@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-import json, time, threading
+import json, time, threading, os, tempfile
 
 _PROGRESS_FILE = Path('scraper/data/skill_progress.json')
 _LOCK = threading.Lock()
@@ -29,10 +29,29 @@ def load_progress() -> Dict[str, Dict[str, Any]]:
 
 def save_progress(progress: Dict[str, Dict[str, Any]]):
     _ensure_dir()
-    tmp = _PROGRESS_FILE.with_suffix('.tmp')
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(progress, f, ensure_ascii=False, indent=2)
-    tmp.replace(_PROGRESS_FILE)
+    # Write to a uniquely named temp file in the same directory to avoid Windows file contention
+    dirpath = _PROGRESS_FILE.parent
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix='skill_progress_', suffix='.tmp', dir=dirpath)
+    try:
+        with os.fdopen(tmp_fd, 'w', encoding='utf-8') as f:
+            json.dump(progress, f, ensure_ascii=False, indent=2)
+        # Try atomic replace with a short retry loop for Windows
+        for _ in range(3):
+            try:
+                os.replace(tmp_path, _PROGRESS_FILE)
+                break
+            except PermissionError:
+                time.sleep(0.05)
+        else:
+            # Final attempt, may raise
+            os.replace(tmp_path, _PROGRESS_FILE)
+    finally:
+        # Ensure temp file is removed if replace failed earlier
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 def upsert_progress(skill: str, status: str, note: Optional[str] = None) -> Dict[str, Any]:

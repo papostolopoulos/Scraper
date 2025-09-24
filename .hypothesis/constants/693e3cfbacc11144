@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\sources\adzuna_source.py
+# hypothesis_version: 6.140.2
+
+[20.0, 100, 200, 400, 401, 403, 429, 600, '+00:00', '-', '.', '<[^>]+>', 'ADZUNA_APP_ID', 'ADZUNA_APP_KEY', 'Accept', 'USD', 'Z', '^www\\.', 'adref', 'app_id', 'app_key', 'application/json', 'company', 'content-type', 'contract', 'contract_time', 'contract_type', 'created', 'description', 'display_name', 'distance', 'external', 'full_time', 'https?://([^/]+)', 'hybrid', 'id', 'latitude', 'location', 'longitude', 'max_days_old', 'onsite', 'part_time', 'permanent', 'redirect_url', 'remote', 'results', 'results_per_page', 'salary_currency', 'salary_is_predicted', 'salary_max', 'salary_min', 'salary_period', 'title', 'us', 'what', 'where']

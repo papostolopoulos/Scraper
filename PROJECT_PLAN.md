@@ -1,7 +1,7 @@
 # Job Miner Project Plan
 
 ## 1. Objective & Reliability Criteria
-**Objective (Updated Sep 20, 2025):** Deliver a simple web experience where a user can upload a resume, enter job search criteria, and download a CSV (capped at 100 roles) ranked against their skills—now with robust multi‑source ingestion (Greenhouse, Lever, Indeed local) and provenance-aware de‑duplication preserving determinism, transparency, and ToS compliance.
+**Objective (Updated Sep 23, 2025):** Deliver a simple web experience where a user can upload a resume, enter job search criteria, and download a CSV (capped at 100 roles) ranked against their skills—now with robust multi‑source ingestion (Greenhouse, Lever, Indeed local) and provenance-aware de‑duplication preserving determinism, transparency, and ToS compliance—augmented with an observability layer (structured logging, metrics, retention snapshots, anomaly detection) and performance-focused, accessible UI enhancements.
 
 **What Success Looks Like:**
 - You can run one command to collect (or ingest) jobs, score them, and export structured outputs (Excel / CSV) any day with consistent runtime and without manual cleanup.
@@ -47,29 +47,46 @@
 | Slow Test Marking | Labeled long tests so day‑to‑day runs skip them by default. | Keeps most test runs fast. |
 | Test Speedups | Stubbed expensive PDF parsing and reduced waits in tests. | Lower friction running tests often. |
 | Test Timeout Guard | Added a timeout per test to avoid hangs. | Prevents stalled CI pipelines. |
-| Coverage Reporting (XML + HTML) | Collects pnd publishes code coverage reports. | Shows what code is untested; supports quality tracking. |
+| Coverage Reporting (XML + HTML) | Collects and publishes code coverage reports. | Shows what code is untested; supports quality tracking. |
 | Coverage Badge JSON | Generates a badge artifact summarizing coverage %. | Visual progress indicator. |
 | Pre-commit Hooks | Automatic checks (style, type, quick tests) before commits. | Catches issues early; consistent codebase. |
 | Flaky Test Reruns (Local + CI) | Automatic reruns for marked flaky tests only. | Reduces noise while not hiding real failures. |
 | Limited Rerun Logic | CI reruns only tests labeled flaky; others fail fast. | Keeps signal high while tolerating known instability. |
 | CI Workflow Hardening | Matrix Python versions, security audit, artifacts, caching. | Cross-version confidence and supply chain vigilance. |
 | Fast Test Script | One command to run quick subset of tests. | Encourages frequent verification. |
-
-| External Source Adapter (Indeed) | Added a non-scraping loader for local Indeed JSON with normalization and ID namespacing. | Enables safe multi-source ingestion and offline testing without live collection (ToS‑friendly). |
+| External Source Adapter (Indeed) | Added a non-scraping loader for local Indeed JSON with normalization and ID namespacing. | Enables safe multi-source ingestion and offline testing (ToS‑friendly). |
 | Provenance export column + tests | Transparency | Adds explicit provenance column to both streaming & non-streaming exports with tests | Increases trust & traceability for merged records |
 | ResourceWarnings cleanup (DB) | Reliability | Persistent sqlite connection + fixture ensuring deterministic close | Eliminates noisy unclosed connection warnings |
-| Fuzzy normalization toggle | Dedupe Quality | Env-flag gated normalization for company/title/location prior to signature + tests (positive/negative) | Improves duplicate recall without altering default conservative behavior |
+| Fuzzy normalization toggle | Dedupe Quality | Env-flag gated normalization for company/title/location prior to signature + tests | Improves duplicate recall without altering default conservative behavior |
 | Skill gap aggregation export | Data Quality | Compute missing frequent skills across shortlisted jobs -> skill_gaps.csv | Guides user on resume improvement / up-skilling |
 | Skill gap taxonomy categories | Data Quality | Optional taxonomy mapping adds category column to skill_gaps.csv | Improves interpretability & planning |
-| Semantic Config Externalization | Introduced `config/semantic.yml` with environment overrides and a `max_new` cap. | Easier tuning, deterministic runs, and safe bounds on enrichment additions. |
-| Semantic Benchmark & Caching | Added benchmark script, seed token caching, and optional embedding of metrics into run summary. | Visibility into enrichment overhead and trend tracking; faster repeated runs. |
-| Learning Velocity Metrics API & UI | Added /api/skill_progress/metrics + history tracking + sparkline & color-coded delta/avg/acceleration badges | Surfaces progress momentum, enabling acceleration tracking |
-| UI Loading Skeletons | Added animated placeholder skeletons for gaps & recommendations while fetching | Improves perceived performance & reduces layout shift |
-| UI Filter Preference Persistence | Store hide-achieved / hide-blocked preferences in localStorage | Respects user choices across sessions; less friction |
-| Recommendation Provenance Badges | Display source provenance badges (up to 3 + overflow) for future enrichment | Enhances transparency of recommendation origins |
+| Semantic Config Externalization | Introduced `config/semantic.yml` with environment overrides & `max_new` cap | Easier tuning & deterministic runs |
+| Semantic Benchmark & Caching | Benchmark script + seed token caching + optional embedding into run summary | Visibility into enrichment overhead; faster repeats |
+| Learning Velocity Metrics API & UI | /api/skill_progress/metrics + sparkline & delta/avg/acceleration badges | Surfaces progress momentum |
+| UI Loading Skeletons | Animated placeholders for gaps & recommendations panels | Improves perceived performance |
+| UI Filter Preference Persistence | localStorage for hide-achieved / hide-blocked | Respects user preferences |
+| Recommendation Provenance Badges | Source badges (up to 3 + overflow) | Transparency of recommendation origins |
+| Async job model & polling API | Background job execution with tokenized polling | Improves UX & resilience |
+| Progress metrics in status endpoint | Phase counts exposed for polling | Enables frontend progress bar & ETA |
+| Paging env overrides | JOBMINER_MAX_PAGES / RESULTS_PER_PAGE env | Tuning performance without code changes |
+| Skill gap taxonomy categories | Enrichment categories appended | Better prioritization |
+| UI skill gaps panel | Dynamic gaps display (category, priority) | Immediate insight into missing skills |
+| UI adaptive recommendations panel | Interactive status transitions | Encourages iterative up-skilling |
+| UI progress integration | Inline progress updates via POST | Real-time feedback loop |
+| UI progress bar & ETA | Determinate bar + phase EMA ETA | Sets expectations for completion time |
+| Job details endpoint (/api/job_details) | Returns detailed job info | Enables richer UI detail views |
+| UI provenance badges + multi-source filter | Badges + filter controls | Improves source transparency & filtering |
+| Accessibility upgrades (ARIA + keyboard navigation) | Roles, focus mgmt, keyboard toggles | Inclusive, accessible UI |
+| Infinite scroll & pagination refactor | Sentinel-based lazy loading | Smoother browsing & performance |
+| Render telemetry overlay | In-page render metrics | Aids performance tuning |
+| Structured JSON logging middleware | Request/response JSON logs | Machine-parsable observability baseline |
+| Job lifecycle event ring buffer | Bounded recent event storage | Quick inspection of recent job phases |
+| /api/metrics endpoint | Aggregated timing & status counts | Programmatic metrics access |
+| Snapshot retention & pruning | JSONL snapshots + age/line pruning | Historical trend retention with bounded size |
+| Anomaly detection & /api/health/summary | Spike/error-rate/zero-job streak alerts | Early warning system |
 
 ## 3. Remaining Tasks (Updated)
-Updated thematic backlog after provenance integration:
+Updated thematic backlog after provenance & observability integration:
 
 A. Data Quality & Enrichment
 - (Done) Add provenance column to exports (CSV / Excel) + tests.
@@ -79,16 +96,22 @@ A. Data Quality & Enrichment
 B. User Experience & Transparency
 - (Done) Frontend progress bar & ETA (reuse phase counts).
 - (Done) Top matched skills & semantic additions per job (UI toggle).
-- Provenance badges (e.g., GH+Lever) in UI list.
+- (Done) Provenance badges (multi-source badges + overflow tooltip + filter).
  - (Done) Provenance badges (e.g., GH+Lever) in UI list (multi-source badges + overflow tooltip + filter).
  - (Done) Loading skeletons for gaps & recommendations panels.
  - (Done) Persist panel filter preferences (localStorage).
  - (Done) Learning velocity sparkline + delta & average badges.
+ - Surface health/alert badge & metrics panel (pending).
 
 C. Reliability & Monitoring
-- Daily snapshot automation + weekly summary generation.
-- Health summary Markdown (latest metrics + anomalies).
-- Structured JSON logging (baseline fields).
+- (Done) Structured JSON logging.
+- (Done) Metrics endpoint (/api/metrics).
+- (Done) Snapshot retention & pruning.
+- (Done) Anomaly detection + /api/health/summary.
+- Add automated tests (metrics accuracy, snapshot append/prune, anomaly triggers).
+- Document observability env vars & runbook.
+- UI surfacing of health alerts & key metrics.
+- Weekly summary generation (markdown) (pending).
 
 D. Performance & Scaling
 - Benchmark multi-worker scoring; decide on enabling env variable.
@@ -101,9 +124,10 @@ E. Governance & Safety
 F. Documentation & Onboarding
 - CSV column reference (add provenance & signature optional).
 - Adapter authoring guide (contract, rate limiting, tests).
+- Observability guide (env vars, endpoints, alert meanings).
 
 G. Release & Distribution
-- Prep 0.3.x release (multi-source + provenance).
+- Prep 0.3.x release (multi-source + provenance + observability baseline).
 - Define 1.0 readiness checklist (perf, coverage, UX polish).
 
 H. Stretch
@@ -111,6 +135,7 @@ H. Stretch
 - Resume A/B comparison with skill delta matrix.
 - Skill gap recommender (clustering jobs by missing skill sets).
 - Progressive enhancement front-end (htmx or light React).
+- Advanced anomaly detection (rolling median/IQR, z-score, seasonality).
 
 ## 3a. MVP Definition & Priority Order (Re-scoped for Web UI)
 **MVP Goal:** A local web page (can reuse/extend the existing Job Miner page) that lets a user:
@@ -193,6 +218,16 @@ Notes on compliance: Automated scraping of LinkedIn search results violates Link
 | UI adaptive recommendations panel | Web UI | 4 | 1.25 | Done | Interactive status updates (planned→in_progress→achieved), blocked badges, filtering |
 | UI progress integration | Web UI | 2 | 0.5 | Done | Inline progress updates persisted via POST to /api/skill_progress |
 | UI progress bar & ETA | Web UI | 2 | 0.75 | Done | Determinate bar + phase-based ETA using historical EMA of phase durations (fallback heuristic) |
+| Job details endpoint (/api/job_details) | Web | 2 | 0.5 | Done | Returns full job details (provenance, skills) for detail panel |
+| UI provenance badges + multi-source filter | Web UI | 2 | 0.75 | Done | Badge icons + overflow tooltip + source filtering controls |
+| Accessibility upgrades (ARIA + keyboard navigation) | Web UI | 3 | 1 | Done | Landmark roles, focus handling, space/enter toggles, tooltip a11y |
+| Infinite scroll & pagination refactor | Performance | 3 | 1 | Done | Sentinel-based lazy loading replaces page buttons (visibleCount state) |
+| Render telemetry overlay | Performance | 2 | 0.5 | Done | In-page build/paint timing + item render count for profiling |
+| Structured JSON logging middleware | Observability | 3 | 1 | Done | Request/response duration + correlation fields in JSON lines |
+| Job lifecycle event ring buffer | Observability | 2 | 0.5 | Done | Bounded in-memory recent job phase events (status, timings) |
+| /api/metrics endpoint | Observability | 2 | 0.5 | Done | Aggregated timing averages, status counts, recent event tail |
+| Snapshot retention & pruning | Observability | 3 | 1 | Done | JSONL snapshots with age + max line pruning (configurable) |
+| Anomaly detection & /api/health/summary | Observability | 3 | 1 | Done | Spike, error-rate, zero-job streak alerts + snapshot tail |
 
 > Actual Hours: Will be filled when each task completes; variance tracked (+/- %).
 
@@ -229,6 +264,16 @@ For each completed task: `variance = (Actual - Est) / Est`. If variance > +40% t
 16. Provenance field + signature & grouping dedupe.
 17. Rate limiting helper & CLI provenance display.
 18. Documentation updates (README + plan) for provenance.
+19. Async job model & polling API.
+20. Job details endpoint.
+21. UI provenance badges & multi-source filter.
+22. Accessibility upgrades (ARIA, keyboard navigation, tooltips).
+23. Infinite scroll & render telemetry overlay.
+24. Structured JSON logging middleware.
+25. Job lifecycle event ring buffer.
+26. /api/metrics endpoint.
+27. Snapshot retention & pruning.
+28. Anomaly detection & /api/health/summary.
 
 ## 5. Effort Estimate to Reach Completion
 (Assuming one experienced engineer with context; adjust if parallel work possible.)
@@ -301,11 +346,12 @@ DoD:
 |------|--------|-----------|
 | Overfitting scoring weights | Skewed rankings | Validation + explanation exports + configurable weights. |
 | Scraping instability | Data gaps | Login detection + optional manual import path. |
-| LinkedIn ToS violations | Legal/Account risk | Prefer API-based sources; gate any LinkedIn automation behind explicit compliance flags and manual session; avoid by default. |
+| LinkedIn ToS violations | Legal/Account risk | Prefer API-based sources; gate automation behind compliance flags. |
 | Cache corruption | Inaccurate scores | Hash/version guard + tests + trim policy. |
 | Test suite slowdown | Developer friction | Slow markers, fast scripts, selective reruns. |
 | Silent schema drift | Runtime errors later | Version table + migration tests. |
 | Flaky tests masking real issues | Hidden defects | Limit reruns to marked flaky only. |
+| Missing observability endpoint tests | Regressions unnoticed | Add tests for metrics, health summary, snapshots & anomalies. |
 
 ## 9. Definition of Project Completion
 The project is considered complete when:
@@ -331,8 +377,12 @@ Prepared: (Generated automatically)
 | Release Readiness | Manual steps | Add release GitHub Action (tag -> build + changelog) | Consistency |
 
 <!-- NEXT_STEP_START -->
-### Suggested Next Step
-Implement retention & alerting: prune old snapshot lines (rolling window configurable), add lightweight email/console alert hooks for anomalies (spikes, zero-job streak, elevated error rate), and document runbook actions for each alert type.
+### Suggested Next Step (Updated Sep 23, 2025)
+Now that all tests are green and dedupe/Windows persistence issues are fixed, tighten the CI signal and docs:
+- Add a lint+type task (ruff + mypy) to CI and fix any quick findings.
+- Document observability env vars and runbook (metrics snapshots, anomaly heuristics, progress JSON location).
+- Expose /api/health/summary in the UI via a small status badge and a drill-down panel (non-blocking).
+- Optionally raise coverage threshold in `pytest.ini` by a few points to cement the current baseline.
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.

@@ -1,0 +1,26 @@
+{
+  "skilla": {
+    "skill": "skilla",
+    "status": "planned",
+    "first_seen": 1758665260,
+    "updated_at": 1758665260,
+    "history": [
+      {
+        "status": "planned",
+        "ts": 1758665260
+      }
+    ]
+  },
+  "skillb": {
+    "skill": "skillb",
+    "status": "planned",
+    "first_seen": 1758665260,
+    "updated_at": 1758665260,
+    "history": [
+      {
+        "status": "planned",
+        "ts": 1758665260
+      }
+    ]
+  }
+}

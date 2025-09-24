@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\normalization.py
+# hypothesis_version: 6.140.2
+
+['[^a-z0-9]+', '\\s+', 'ca', 'california', 'dev', 'developer', 'eng', 'engineer', 'fl', 'florida', 'il', 'illinois', 'jr', 'junior', 'ma', 'massachusetts', 'new york', 'normalize_company', 'normalize_location', 'normalize_title', 'ny', 'pa', 'pennsylvania', 'saint ', 'senior', 'sr', 'st ', 'st. ', 'texas', 'the ', 'tx', 'wa', 'washington']

@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\sources\base.py
+# hypothesis_version: 6.140.2
+
+[':', '[^a-z0-9]+', 'alt', 'boards.greenhouse.io', 'class', 'enabled', 'jobs.lever.co', 'mock', 'module', 'name', 'new', 'offered_salary_max', 'offered_salary_min', 'options', 'provenance', 'salary_is_predicted', 'salary_period', 'smartrecruiters.com', 'sources', 'workable.com']

@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\responsibility_match.py
+# hypothesis_version: 6.140.2
+
+[0.4, 0.64, 120, 400, '(?<=[.!?])\\s+', '[;]\\s+', '[a-zA-Z0-9+.#-]+', 'all-MiniLM-L6-v2']

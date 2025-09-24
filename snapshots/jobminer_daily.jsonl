@@ -1,0 +1,1 @@
+{"jobs": {"total": 1}, "statuses": {"done": 1}, "avg_fetch_sec": 0.2, "avg_scoring_sec": 0.3, "avg_export_sec": 0.1, "avg_total_sec": 0.7, "tokens_active": 2, "download_ips": 0, "event_tail": [{"kind": "job_created", "ts": "2025-09-23T22:13:16.239205+00:00", "job_id": "test-221316239083", "title": null}], "ts": "2025-09-23T22:13:16.277921+00:00"}

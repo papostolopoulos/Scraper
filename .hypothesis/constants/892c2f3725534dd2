@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\weights.py
+# hypothesis_version: 6.140.2
+
+[0.8, 1.5, '; ', 'SCRAPER_WEIGHTS_FILE', 'WEIGHT_KEYS', 'company', 'config', 'load_weights', 'recency', 'review', 'semantic', 'seniority', 'shortlist', 'skill', 'thresholds', 'utf-8', 'weights', 'weights.yml']

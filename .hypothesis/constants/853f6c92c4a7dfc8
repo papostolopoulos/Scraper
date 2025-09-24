@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\enrich.py
+# hypothesis_version: 6.140.2
+
+[-122.4194, -122.3321, -74.006, -71.0589, -0.1278, 2.1734, 37.7749, 40.7128, 41.3851, 42.3601, 47.6062, 51.5074, ', ', ',?\\s*BV$', ',?\\s*Corp\\.?$', ',?\\s*Corporation$', ',?\\s*GmbH$', ',?\\s*Inc\\.?$', ',?\\s*LLC$', ',?\\s*Limited$', ',?\\s*Ltd\\.?$', ',?\\s*PLC$', ',?\\s*SA$', ',?\\s*SAS$', '.json', 'CA', 'CO', 'California', 'Colorado', 'IL', 'Illinois', 'MA', 'Massachusetts', 'NY', 'New York', 'Remote', 'TX', 'Texas', 'U.K.', 'U.S.', 'U.S.A.', 'UK', 'US', 'USA', 'United Kingdom', 'United States', 'WA', 'Washington', '\\s+', '^(the)\\s+', 'barcelona', 'boston', 'city', 'country', 'enrich_jobs', 'geocode_location', 'load_company_map', 'london', 'mode_hint', 'new york', 'normalize_company', 'parse_location', 'raw', 'regex_v1', 'region', 'remote', 'san francisco', 'seattle', 'source', 'utf-8', 'v1.1', '|']

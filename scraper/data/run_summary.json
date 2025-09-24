@@ -1,0 +1,15 @@
+{
+  "jobs_processed": 1,
+  "skill_cache_hits": 0,
+  "skill_cache_misses": 1,
+  "avg_score": 0.145,
+  "skills_per_job": 2.0,
+  "timings": {
+    "resume_load_s": 0.0084,
+    "fetch_jobs_s": 0.0,
+    "scoring_s": 0.0697,
+    "total_s": 0.0862
+  },
+  "parallel_workers": 1,
+  "parallel_enabled": false
+}

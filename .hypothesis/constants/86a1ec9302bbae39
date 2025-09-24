@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\skills.py
+# hypothesis_version: 6.140.2
+
+[0.0, 0.05, 0.5, 0.6, 0.7, '[a-zA-Z0-9+.#-]+', 'e-mail', 'email', 'er', 'ers', 'ies', 'infra', 'infrastructure', 'ing', 'k8s', 'kubernetes', 'program', 'programme', 's', 'utf-8']

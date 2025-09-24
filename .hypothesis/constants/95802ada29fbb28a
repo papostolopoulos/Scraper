@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\sources\lever_source.py
+# hypothesis_version: 6.140.2
+
+[20.0, 1000.0, 200, 10000000000, '-', 'Accept', 'application/json', 'categories', 'commitment', 'content', 'createdAt', 'descriptionHtml', 'descriptionPlain', 'external', 'hostedUrl', 'id', 'lists', 'location', 'text']

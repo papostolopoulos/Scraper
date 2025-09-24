@@ -3,6 +3,11 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
+from .snapshot import SnapshotWriter
+SNAPSHOT_WRITER = SnapshotWriter()
+def write_daily_snapshot(metrics: dict):
+    SNAPSHOT_WRITER.append(metrics)
+    SNAPSHOT_WRITER.prune(SNAPSHOT_MAX_LINES, SNAPSHOT_MAX_AGE_DAYS)
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import io
@@ -814,35 +819,22 @@ def skill_gaps(token: Optional[str] = None, limit: int = 10):
     if token:
         for d in candidates:
             if d.parent.name.startswith(token[:8]):  # loose heuristic
-                selected = d; break
+                selected = d
+                break
     # Fallback to most recent modified
     if not selected:
         selected = max(candidates, key=lambda p: p.stat().st_mtime)
     try:
         import json as _json
         data = _json.loads(selected.read_text(encoding='utf-8'))
-        # Sort by priority_score desc if present
-        # Skip achieved (do not recommend again)
-        if sk in achieved:
-            continue
-        unmet = unresolved_prereqs(sk, achieved)
-        if unmet:
-            item['blocked_by'] = unmet
-        adaptive.append(item)
-    # Ranking adjustments:
-    # 1. Unblocked before blocked
-    # 2. Within those, priority_score desc (if present)
-    # 3. Deprioritize in_progress slightly vs planned/untracked
-    def rank_key(it):
-        blocked = 1 if 'blocked_by' in it else 0
-        prio = it.get('priority_score', 0) or 0
-        status = it.get('progress_status')
-        status_penalty = 0.1 if status == 'in_progress' else 0.0
-        return (blocked, -(prio - status_penalty))
-    adaptive.sort(key=rank_key)
-    # Trim to limit
-    adaptive = adaptive[:limit]
-    return {'recommendations': adaptive, 'count': len(adaptive), 'dependencies_loaded': bool(deps)}
+    except Exception:
+        return {'gaps': []}
+    # Expect data to be a list of gap objects
+    if not isinstance(data, list):
+        return {'gaps': []}
+    # Sort by priority_score desc if present
+    data.sort(key=lambda x: (-(x.get('priority_score') or 0)), reverse=False)
+    return {'gaps': data[:limit], 'count': min(len(data), limit)}
 
 @app.get('/api/skill_progress')
 def api_list_skill_progress(status: str | None = None):
@@ -945,7 +937,41 @@ def api_metrics():
         'download_ips': len(DOWNLOAD_COUNTS),
         'event_tail': events_tail,
     }
+    # Write daily snapshot (once per day or on demand)
+    write_daily_snapshot(metrics)
     return metrics
+
+
+# --- Health summary & alerting ---
+def detect_anomalies(snapshots: list[dict]) -> dict:
+    alerts = []
+    if not snapshots:
+        return {'alerts': ['No snapshots found.']}
+    # Fetch time spike
+    fetches = [s.get('avg_fetch_sec') for s in snapshots if s.get('avg_fetch_sec')]
+    if len(fetches) >= 2:
+        last, prev = fetches[-1], fetches[-2]
+        if prev and last > prev * ANOM_FETCH_SPIKE:
+            alerts.append(f"Fetch time spike: {last:.2f}s (prev {prev:.2f}s)")
+    # Error rate
+    statuses = [s.get('statuses', {}) for s in snapshots]
+    for stat in statuses[-3:]:
+        err = stat.get('error', 0)
+        tot = sum(stat.values())
+        if tot and err/tot > ANOM_ERROR_RATE:
+            alerts.append(f"High error rate: {err}/{tot} ({err/tot:.0%})")
+    # Zero jobs streak
+    zero_streak = 0
+    for s in reversed(snapshots):
+        if s.get('jobs', {}).get('total', 1) == 0:
+            zero_streak += 1
+        else:
+            break
+    if zero_streak >= ANOM_ZERO_JOBS_STREAK:
+        alerts.append(f"Zero jobs returned {zero_streak} runs in a row.")
+    return {'alerts': alerts}
+
+## Removed legacy /api/health/summary variant returning recent/alerts to avoid schema clash
 
 @app.get('/api/health/summary')
 def api_health_summary(limit: int = 50):
@@ -1021,6 +1047,77 @@ def api_health_summary(limit: int = 50):
         'latest': runs[-1],
         'anomalies': anomalies,
     }
+
+@app.get('/api/skill_recommendations')
+def api_skill_recommendations(limit: int = 10):
+    """Return enriched skill gap recommendations with adaptive filtering.
+
+    Logic:
+      1. Discover most recent skill_gaps_details.json (reuse logic from /api/skill_gaps).
+      2. Remove achieved skills (status == achieved).
+      3. Attach progress metadata (status, updated_at) when present.
+      4. Compute dependency blockers via skill_dependencies.yml; if any unmet deps (not achieved) add blocked_by list.
+      5. Demote in_progress items relative to untouched for stable ordering when priority_score ties.
+      6. Enrich with optional recommendation metadata (suggested_action, resource_url, resume_phrase).
+    """
+    try:
+        limit = max(1, min(int(limit), 50))
+    except Exception:
+        limit = 10
+    # Reuse discovery from skill_gaps
+    candidates: list[Path] = []
+    try:
+        for p in TMP_DIR.iterdir():
+            if p.is_dir():
+                f = p / 'skill_gaps_details.json'
+                if f.exists():
+                    candidates.append(f)
+    except Exception:
+        pass
+    gaps: list[dict] = []
+    if candidates:
+        selected = max(candidates, key=lambda p: p.stat().st_mtime)
+        try:
+            gaps_raw = _json.loads(selected.read_text(encoding='utf-8'))
+            if isinstance(gaps_raw, list):
+                gaps = [g for g in gaps_raw if isinstance(g, dict)]
+        except Exception:
+            gaps = []
+    if not gaps:
+        return {'recommendations': [], 'count': 0}
+    # Sort by priority_score desc default
+    gaps.sort(key=lambda g: (-(g.get('priority_score') or 0), g.get('skill','')))
+    # Progress + dependencies
+    from scraper.jobminer.skill_progress import load_progress
+    progress_map = load_progress()
+    achieved = {k for k,v in progress_map.items() if v.get('status') == 'achieved'}
+    recs = []
+    for g in gaps:
+        sk = (g.get('skill') or '').lower()
+        if sk in achieved:  # filter achieved entirely
+            continue
+        item = dict(g)
+        prog = progress_map.get(sk)
+        if prog:
+            item['progress_status'] = prog.get('status')
+            item['progress_updated_at'] = prog.get('updated_at')
+        # Dependency blockers
+        try:
+            unmet = unresolved_prereqs(sk, achieved)
+            if unmet and sk not in achieved:
+                item['blocked_by'] = unmet
+        except Exception:
+            pass
+        recs.append(item)
+    # Enrich via recommendations config
+    recs = enrich_gap_skills(recs, max_items=limit*2)  # enrich more then trim after sorting adjustments
+    # Re-rank: primary priority_score desc, secondary: progress status (in_progress demoted)
+    def _progress_rank(s: str | None) -> int:
+        if s == 'in_progress':
+            return 1
+        return 0
+    recs.sort(key=lambda r: (-(r.get('priority_score') or 0), _progress_rank(r.get('progress_status')), r.get('skill','')))
+    return {'recommendations': recs[:limit], 'count': min(len(recs), limit)}
 
 @app.get("/api/debug/tokens")
 def debug_tokens():
