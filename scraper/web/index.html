@@ -480,20 +480,34 @@
     }
 
     function computeProgress(job){
-      // Phases inferred from timings keys; fallback weights
-      const phaseOrder = ['resume','collect','score','export'];
-      // Identify completed phases by presence of timing key *or* progress markers
-      let completed = 0; let currentPhase = 'Working…';
+      // Server now emits progress_extract / progress_score markers inside timings
       const t = job.timings || {};
-      for(const ph of phaseOrder){
-        const key = `${ph}_sec`;
-        if(t[key]!=null){ completed++; }
-        else { currentPhase = ph; break; }
+      const total = (t.progress_extract && t.progress_extract.total) || (t.progress_score && t.progress_score.total) || job.count || job.limit || 1;
+      const extract = t.progress_extract ? t.progress_extract.processed : 0;
+      const score = t.progress_score ? t.progress_score.processed : 0;
+      let phase = job.status;
+      let pct = 0;
+      if(job.status==='fetching'){
+        phase = 'collect'; pct = 0.08;
+      } else if(job.status==='scoring'){
+        // Weighted: extraction half, scoring half
+        const extractPct = total ? (extract/total) : 0;
+        const scorePct = total ? (score/total) : 0;
+        pct = 0.1 + (extractPct*0.45) + (scorePct*0.35);
+        phase = scorePct>0 ? 'score' : 'extract';
+      } else if(job.status==='exporting'){
+        pct = 0.92; phase = 'export';
+      } else if(job.status==='done'){
+        pct = 1; phase = 'Complete';
+      } else if(job.status==='error'){
+        pct = 1; phase = 'Error';
       }
-      if(completed===phaseOrder.length){ return { pct:1, phase:'Complete', etaSec:0}; }
-      const pct = (completed + 0.15) / phaseOrder.length; // crude partial
-      const eta = estimateEta(job, currentPhase, completed, phaseOrder.length);
-      return { pct, phase: currentPhase, etaSec: eta };
+      // ETA approximation using local historical averages
+      const eta = estimateEta(job, phase, 0, 4);
+      // Display processed counts in phase label
+      if(phase==='extract' && total){ phase = `extract ${extract}/${total}`; }
+      else if(phase==='score' && total){ phase = `score ${score}/${total}`; }
+      return { pct, phase, etaSec: eta };
     }
 
     function estimateEta(job, currentPhase, completedCount, totalPhases){

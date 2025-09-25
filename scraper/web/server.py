@@ -344,9 +344,9 @@ def _process_job(job: JobRun):
         if jobs:
             def _progress_cb(phase, processed, total):
                 job.count = total
-                # We overload 'count' as total jobs; provide processed via timings map for now
+                # Store granular extraction / scoring progress for UI
                 job.timings[f'progress_{phase}'] = {'processed': processed, 'total': total}
-            score_all(db, resume_path, seed_path, write_summary=False, max_workers=1, progress_cb=_progress_cb)
+            score_all(db, resume_path, seed_path, write_summary=False, max_workers=None, progress_cb=_progress_cb)
         job.timings['scoring_sec'] = round(time.perf_counter() - t_score, 3)
         # Export
         job.status = 'exporting'
@@ -410,13 +410,11 @@ def _process_job(job: JobRun):
         except Exception:
             pass
         try:
-            # Attempt cleanup of resume temp file
             rp = job.params.get('resume_path')
             if rp and Path(rp).exists():
                 Path(rp).unlink(missing_ok=True)
         except Exception:
             pass
-        # Persist snapshot (append JSON line) for health summary calculations
         try:
             snap_dir = TMP_DIR / 'snapshots'
             snap_dir.mkdir(parents=True, exist_ok=True)
@@ -432,8 +430,13 @@ def _process_job(job: JobRun):
             }
             with open(snap_file, 'a', encoding='utf-8') as fh:
                 fh.write(_json.dumps(record) + '\n')
-            # Prune snapshot file to enforce retention limits
-            _prune_snapshot_file(snap_file)
+            # Simple prune: keep last 5000 lines
+            try:
+                lines = snap_file.read_text(encoding='utf-8').splitlines()
+                if len(lines) > 5000:
+                    snap_file.write_text("\n".join(lines[-5000:]), encoding='utf-8')
+            except Exception:
+                pass
         except Exception:
             pass
         _prune_jobs()

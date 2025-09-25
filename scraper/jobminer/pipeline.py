@@ -65,6 +65,7 @@ def score_all(
     use_semantic = semantic_enabled(match_cfg, semantic_override)
     jobs = db.fetch_all()
     if progress_cb:
+        # Initial progress callback for UI (fetch phase)
         try:
             progress_cb(phase='fetch', processed=0, total=len(jobs))
         except Exception:
@@ -81,7 +82,8 @@ def score_all(
     t_scoring_start = time.time()
     # Determine max workers (env var fallback)
     if max_workers is None:
-        env_workers = os.getenv('SCRAPER_MAX_WORKERS')
+        # Precedence: explicit arg > JOBMINER_SCORE_WORKERS > SCRAPER_MAX_WORKERS > default 1
+        env_workers = os.getenv('JOBMINER_SCORE_WORKERS') or os.getenv('SCRAPER_MAX_WORKERS')
         if env_workers and env_workers.isdigit():
             max_workers = int(env_workers)
         else:
@@ -91,6 +93,19 @@ def score_all(
     cache_lock = threading.Lock()
 
     # Pre-pass: we will collect descriptions to extract skills anyway inside scoring; to integrate IDF weighting we still rely on final extracted sets.
+    if max_workers > 8:
+        max_workers = 8
+
+    # Optional global job hard cap (extra safety) applied *after* DB fetch but before processing
+    job_cap_env = os.getenv('JOBMINER_HARD_JOB_CAP')
+    if job_cap_env and job_cap_env.isdigit():
+        cap = max(1, int(job_cap_env))
+        jobs = db.fetch_all()
+        if len(jobs) > cap:
+            jobs = jobs[:cap]
+            db._jobs = jobs  # NOTE: internal direct assignment (safe for in-memory DB abstraction)
+    else:
+        jobs = db.fetch_all()
     # We'll process as before but store skill metrics during processing using a two-phase approach:
 
     # Frequency map will be filled dynamically; we first extract skills per job then compute weighting.

@@ -16,7 +16,8 @@ def semantic_enabled(matching_cfg: dict | None, override: bool | None = None) ->
     if override is not None:
         return bool(override)
     # Env explicit off wins
-    if os.getenv('SCRAPER_NO_SEMANTIC') == '1':
+    # New alias env for clarity
+    if os.getenv('SCRAPER_NO_SEMANTIC') == '1' or os.getenv('JOBMINER_DISABLE_SEMANTIC') == '1':
         return False
     env_toggle = os.getenv('SCRAPER_SEMANTIC_ENABLE')
     if env_toggle is not None:
