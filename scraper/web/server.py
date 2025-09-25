@@ -329,9 +329,9 @@ def _process_job(job: JobRun):
             jobs = jobs[:limit]
         job.count = len(jobs)
         # DB + scoring
-    job.status = 'scoring'
+        job.status = 'scoring'
         log_event('job_scoring_start', job_id=job.job_id, fetched=job.count)
-    _persist_job(job)
+        _persist_job(job)
         db = JobDB()
         db.upsert_jobs(jobs)
         seed_path = Path("scraper/config/seed_skills.txt")
@@ -348,9 +348,9 @@ def _process_job(job: JobRun):
             score_all(db, resume_path, seed_path, write_summary=False, max_workers=1, progress_cb=_progress_cb)
         job.timings['scoring_sec'] = round(time.perf_counter() - t_score, 3)
         # Export
-    job.status = 'exporting'
+        job.status = 'exporting'
         log_event('job_export_start', job_id=job.job_id)
-    _persist_job(job)
+        _persist_job(job)
         export_dir = TMP_DIR / uuid.uuid4().hex
         exporter = Exporter(db, export_dir, stream=True)
         t_export = time.perf_counter()
@@ -393,8 +393,8 @@ def _process_job(job: JobRun):
         _prune_tokens()
         job.token = token
         job.artifact_file = file_path if 'file_path' in locals() else None
-    job.status = 'done'
-    _persist_job(job)
+        job.status = 'done'
+        _persist_job(job)
     except Exception as e:
         job.status = 'error'
         job.error = str(e)
@@ -431,8 +431,6 @@ def _process_job(job: JobRun):
             }
             with open(snap_file, 'a', encoding='utf-8') as fh:
                 fh.write(_json.dumps(record) + '\n')
-            # Prune snapshot file to enforce retention limits
-            _prune_snapshot_file(snap_file)
         except Exception:
             pass
         _prune_jobs()
