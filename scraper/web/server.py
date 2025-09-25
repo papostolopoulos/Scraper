@@ -325,6 +325,7 @@ def _process_job(job: JobRun):
         if work_mode and work_mode.lower() in ("remote","hybrid","onsite"):
             wm = work_mode.lower()
             jobs = [j for j in jobs if (j.work_mode or '').lower() == wm]
+        # Enforce hard cap immediately so downstream scoring never processes more than requested
         if len(jobs) > limit:
             jobs = jobs[:limit]
         job.count = len(jobs)
