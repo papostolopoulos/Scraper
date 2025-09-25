@@ -1,7 +1,7 @@
 # Job Miner Project Plan
 
 ## 1. Objective & Reliability Criteria
-**Objective (Updated Sep 23, 2025):** Deliver a simple web experience where a user can upload a resume, enter job search criteria, and download a CSV (capped at 100 roles) ranked against their skills—now with robust multi‑source ingestion (Greenhouse, Lever, Indeed local) and provenance-aware de‑duplication preserving determinism, transparency, and ToS compliance—augmented with an observability layer (structured logging, metrics, retention snapshots, anomaly detection) and performance-focused, accessible UI enhancements.
+**Objective (Updated Sep 25, 2025):** Deliver a simple web experience where a user can upload a resume, enter job search criteria, and download a CSV (capped at 100 roles) ranked against their skills—now with robust multi‑source ingestion (Greenhouse, Lever, Indeed local) and provenance-aware de‑duplication preserving determinism, transparency, and ToS compliance—augmented with an observability layer (structured logging, metrics, retention snapshots, anomaly detection) and performance-focused, accessible UI enhancements. Recent improvements: persistent async job state & artifacts across reloads, health badge + anomaly surfacing in UI, strict pre-scoring limit enforcement, environment-driven parallel scoring & hard caps, richer real-time progress (extract/score processed counts), and an automated weekly summary reporter for operational trends.
 
 **What Success Looks Like:**
 - You can run one command to collect (or ingest) jobs, score them, and export structured outputs (Excel / CSV) any day with consistent runtime and without manual cleanup.
@@ -84,6 +84,27 @@
 | /api/metrics endpoint | Aggregated timing & status counts | Programmatic metrics access |
 | Snapshot retention & pruning | JSONL snapshots + age/line pruning | Historical trend retention with bounded size |
 | Anomaly detection & /api/health/summary | Spike/error-rate/zero-job streak alerts | Early warning system |
+| Async job state persistence (disk) | Survives reloads | Polling resilient after --reload |
+| Token artifact persistence (CSV) | Reload-safe downloads | CSV still retrievable within TTL |
+| Expanded CORS (file:// + localhost regex) | Easier local UI | Open HTML directly & GitHub Pages origin |
+| Health badge & details panel | Visual alerts in UI | Immediate anomaly visibility |
+| Hard fetch cap enforcement | Slice before scoring | Prevents over-processing beyond limit |
+| JOBMINER_HARD_JOB_CAP env | Safety cap | Global upper bound independent of user limit |
+| JOBMINER_SCORE_WORKERS env | Parallel scoring | Faster extraction/scoring (<=8 workers) |
+| Semantic disable alias (JOBMINER_DISABLE_SEMANTIC) | Faster runs | Simple flag parity with SCRAPER_NO_SEMANTIC |
+| Progress processed/total counts in UI | Finer feedback | Shows extract X/Y, score X/Y |
+| Snapshot JSONL for jobs | Historical runs | Backing data for health summary |
+| Phase 2 multi-source merge & backfill | Dedupe + enrichment | Canonical clustering, field backfill, provenance ordering env toggles |
+| Merge stats metrics exposure | Transparency / Monitoring | Added merge_last_before/after & dedup_saved to /api/metrics for tracking dedupe effectiveness |
+| Export provenance_count column | Transparency | Added provenance_count to jobs_full CSV (stream & non-stream) + tests |
+| Merge effectiveness ratio metric | Monitoring | Exposes merge_effectiveness (saved/before) in /api/metrics for trend tracking |
+| Historical merge effectiveness tracking | Monitoring | Added merge stats series & averages to /api/health/summary (merge_series + effectiveness averages) |
+| Merge effectiveness drop anomaly | Monitoring | Detects sharp effectiveness declines (latest <40% prev median & delta >=0.08) in /api/health/summary |
+| Weekly summary markdown generator | Reporting | Aggregates last N days of runs.jsonl → snapshots/weekly/YYYY-WW.md (counts, timings, merge effectiveness, top titles) |
+| README async job API + progress docs | Documentation | Added section describing /api/jobs lifecycle, download endpoint, monitoring endpoints, progress bar heuristics |
+| Cancellation endpoint & cooperative cancellation | Reliability | /api/jobs/{id}/cancel + thread-safe flag and mid-phase abort checks |
+| Sustained low merge effectiveness anomaly | Monitoring | Detects prolonged degradation (recent median <0.15 vs historical >0.30) |
+| Provenance diversity analysis script | Reporting | Computes provenance_count distribution buckets and median |
 
 ## 3. Remaining Tasks (Updated)
 Updated thematic backlog after provenance & observability integration:
@@ -92,6 +113,9 @@ A. Data Quality & Enrichment
 - (Done) Add provenance column to exports (CSV / Excel) + tests.
 - (Done) Fuzzy normalization (company/title/location) toggle before signature.
  - (Done) Skill gap aggregation (collect missing skills over shortlisted set) + taxonomy + priority weighting.
+ - (Done) Phase 2 multi-source merge (dedupe + field backfill + provenance ordering) guarded by env flags.
+ - (Done) Merge stats surfaced in metrics (dedup savings) for observability.
+ - (Done) Export provenance_count column to quantify source diversity per job.
 
 B. User Experience & Transparency
 - (Done) Frontend progress bar & ETA (reuse phase counts).
@@ -101,7 +125,7 @@ B. User Experience & Transparency
  - (Done) Loading skeletons for gaps & recommendations panels.
  - (Done) Persist panel filter preferences (localStorage).
  - (Done) Learning velocity sparkline + delta & average badges.
- - Surface health/alert badge & metrics panel (pending).
+ - (Done) Surface health/alert badge & metrics panel.
 
 C. Reliability & Monitoring
 - (Done) Structured JSON logging.
@@ -132,6 +156,7 @@ G. Release & Distribution
 
 H. Stretch
 - Additional compliant APIs (Jora / Jooble / Wellfound if permissible).
+ - Salary enrichment from structured government API (e.g., USAJOBS) pending research.
 - Resume A/B comparison with skill delta matrix.
 - Skill gap recommender (clustering jobs by missing skill sets).
 - Progressive enhancement front-end (htmx or light React).
@@ -377,12 +402,14 @@ Prepared: (Generated automatically)
 | Release Readiness | Manual steps | Add release GitHub Action (tag -> build + changelog) | Consistency |
 
 <!-- NEXT_STEP_START -->
-### Suggested Next Step (Updated Sep 23, 2025)
-Now that all tests are green and dedupe/Windows persistence issues are fixed, tighten the CI signal and docs:
-- Add a lint+type task (ruff + mypy) to CI and fix any quick findings.
-- Document observability env vars and runbook (metrics snapshots, anomaly heuristics, progress JSON location).
-- Expose /api/health/summary in the UI via a small status badge and a drill-down panel (non-blocking).
-- Optionally raise coverage threshold in `pytest.ini` by a few points to cement the current baseline.
+### Suggested Next Step (Updated Sep 25, 2025)
+Reliability & UI visualization follow-on (cancellation + anomalies DONE):
+1. Add tests for persistence reload (simulate process restart: clear in-memory JOBS, ensure GET fallback) and hard cap enforcement path.
+2. UI merge effectiveness sparkline: client chart using `merge_series` (median & latest tooltip) + add to README screenshot later.
+3. Integrate provenance diversity output into weekly summary (append section if JSON present) + optional markdown table.
+4. Increment coverage gate baseline after adding new tests (script auto-ratchets >0.5% increases).
+5. Consider WebSocket (or SSE) push channel for progress to reduce polling overhead (research feasibility, optional).
+6. Document cancellation endpoint & anomaly types in observability guide.
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.

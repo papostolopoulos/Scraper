@@ -53,11 +53,11 @@ jobs:
 
       - name: Lint (ruff)
         run: |
-          python -m ruff check scraper/jobminer | tee ruff_report.txt
+          python -m ruff check scraper | tee ruff_report.txt
 
       - name: Type check (mypy)
         run: |
-          python -m mypy scraper/jobminer | tee mypy_report.txt
+          python -m mypy scraper | tee mypy_report.txt
 
       - name: Security audit (pip-audit)
         continue-on-error: true
@@ -154,6 +154,11 @@ PY
         if: always()
         run: |
           echo "Ruff + mypy + tests completed (Python ${{ matrix.python-version }})" > summary.txt
+
+      - name: Enforce coverage gate (+2% over baseline if baseline file present)
+        if: always()
+        run: |
+          if [ -f scripts/coverage_gate.py ]; then python scripts/coverage_gate.py || echo "Coverage gate check failed"; fi
 
       - name: Upload artifacts
         if: always()

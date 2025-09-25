@@ -15,7 +15,7 @@ from typing import Dict, Any, Iterable, Optional
 EXPORT_COLUMNS = [
     'job_id','title','company_name','company_name_normalized','location','location_normalized','work_mode','posted_at','employment_type','seniority_level',
     'offered_salary_min','offered_salary_max','offered_salary_currency','salary_period','salary_is_predicted','salary_heuristic_extracted','offered_salary_min_usd','offered_salary_max_usd','benefits','benefits_normalized',
-    'skill_score','skill_precision','skill_recall','skill_overlap_count','skill_core_size','semantic_score','score_total','matched_skills','status','apply_url','geocode_lat','geocode_lon','provenance'
+    'skill_score','skill_precision','skill_recall','skill_overlap_count','skill_core_size','semantic_score','score_total','matched_skills','status','apply_url','geocode_lat','geocode_lon','provenance','provenance_count'
 ]
 
 class Exporter:
@@ -290,6 +290,7 @@ class Exporter:
             'geocode_lat': getattr(j, 'geocode_lat', None),
             'geocode_lon': getattr(j, 'geocode_lon', None),
             'provenance': ",".join(j.provenance) if getattr(j, 'provenance', None) else None,
+            'provenance_count': len(j.provenance) if getattr(j, 'provenance', None) else 0,
         }
         # Redaction (lazy load config once)
         if not hasattr(self, '_redaction_cfg'):

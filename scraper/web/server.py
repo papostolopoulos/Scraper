@@ -34,6 +34,7 @@ from scraper.jobminer.sources.adzuna_source import (
     AdzunaNetworkError,
 )
 from scraper.jobminer.sources.remotive_source import RemotiveSource
+from scraper.jobminer.multi_source import collect_ats_jobs, merge_and_enrich
 from scraper.jobminer.exporter import Exporter
 from scraper.jobminer.skill_recommendations import enrich_gap_skills
 from scraper.jobminer.skill_progress import upsert_progress, list_progress, get_progress_for, compute_velocity_metrics
@@ -189,7 +190,7 @@ TOKEN_TTL = timedelta(minutes=_ttl_minutes())
 class JobRun:
     job_id: str
     created: datetime
-    status: str = "queued"  # queued|fetching|scoring|exporting|done|error
+    status: str = "queued"  # queued|fetching|scoring|exporting|done|error|cancelled
     error: Optional[str] = None
     params: Dict[str, Any] = field(default_factory=dict)
     timings: Dict[str, float] = field(default_factory=dict)  # phase timings
@@ -197,8 +198,10 @@ class JobRun:
     artifact_file: Optional[Path] = None
     count: int = 0
     limit: int = 0
+    cancelled: bool = False
 
 JOBS: Dict[str, JobRun] = {}
+MERGE_STATS: Dict[str, int] = {'last_before': 0, 'last_after': 0, 'dedup_saved': 0}
 JOBS_LOCK = threading.Lock()
 EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
@@ -214,6 +217,14 @@ def _register_job(j: JobRun):
 def _get_job(job_id: str) -> Optional[JobRun]:
     with JOBS_LOCK:
         return JOBS.get(job_id)
+
+def _cancel_job(job_id: str) -> bool:
+    jr = _get_job(job_id)
+    if not jr:
+        return False
+    jr.cancelled = True
+    log_event('job_cancel_requested', job_id=job_id)
+    return True
 
 def _prune_jobs():
     now = datetime.now(timezone.utc)
@@ -312,7 +323,32 @@ def _process_job(job: JobRun):
         t_fetch = time.perf_counter()
         jobs = src.fetch()
         jobs = normalize_ids(jobs, src.name)
+        # Phase 1 multi-source augmentation: optionally include ATS board postings (Greenhouse/Lever)
+        try:
+            ats_jobs = collect_ats_jobs(title)
+            if ats_jobs:
+                # Normalize IDs for each source variant (already namespaced by job_id + source prefix inside normalization step if reused)
+                jobs.extend(ats_jobs)
+        except Exception as _ats_err:  # non-fatal
+            log_event('ats_collect_error', job_id=job.job_id, error=str(_ats_err))
+        # Phase 2 merge + enrichment (dedupe + field backfill). Enabled by default; can be disabled via env.
+        if os.getenv('JOBMINER_ENABLE_PHASE2_MERGE', '1').lower() in ('1','true','yes','on'):
+            try:
+                before_merge = len(jobs)
+                jobs = merge_and_enrich(jobs)
+                after_merge = len(jobs)
+                MERGE_STATS['last_before'] = before_merge
+                MERGE_STATS['last_after'] = after_merge
+                MERGE_STATS['dedup_saved'] = max(0, before_merge - after_merge)
+                log_event('multi_merge_done', job_id=job.job_id, before=before_merge, after=after_merge, saved=MERGE_STATS['dedup_saved'])
+            except Exception as _m_err:
+                log_event('multi_merge_error', job_id=job.job_id, error=str(_m_err))
         job.timings['fetch_sec'] = round(time.perf_counter() - t_fetch, 3)
+        if job.cancelled:
+            job.status = 'cancelled'
+            log_event('job_cancelled_fetch', job_id=job.job_id)
+            _persist_job(job)
+            return
         fb_enabled = os.getenv('JOBMINER_FALLBACK_ENABLED','1').lower() in ('1','true','yes','on')
         if fb_enabled and len(jobs) == 0:
             try:
@@ -330,6 +366,11 @@ def _process_job(job: JobRun):
             jobs = jobs[:limit]
         job.count = len(jobs)
         # DB + scoring
+        if job.cancelled:
+            job.status = 'cancelled'
+            log_event('job_cancelled_pre_scoring', job_id=job.job_id)
+            _persist_job(job)
+            return
         job.status = 'scoring'
         log_event('job_scoring_start', job_id=job.job_id, fetched=job.count)
         _persist_job(job)
@@ -346,8 +387,15 @@ def _process_job(job: JobRun):
                 job.count = total
                 # Store granular extraction / scoring progress for UI
                 job.timings[f'progress_{phase}'] = {'processed': processed, 'total': total}
+                if job.cancelled:
+                    raise RuntimeError('cancelled')
             score_all(db, resume_path, seed_path, write_summary=False, max_workers=None, progress_cb=_progress_cb)
         job.timings['scoring_sec'] = round(time.perf_counter() - t_score, 3)
+        if job.cancelled:
+            job.status = 'cancelled'
+            log_event('job_cancelled_scoring', job_id=job.job_id)
+            _persist_job(job)
+            return
         # Export
         job.status = 'exporting'
         log_event('job_export_start', job_id=job.job_id)
@@ -366,6 +414,11 @@ def _process_job(job: JobRun):
                     if i+1 >= limit:
                         break
         job.timings['export_sec'] = round(time.perf_counter() - t_export, 3)
+        if job.cancelled:
+            job.status = 'cancelled'
+            log_event('job_cancelled_export', job_id=job.job_id)
+            _persist_job(job)
+            return
         slim_cols = [
             'title','company_name','location','work_mode','employment_type','posted_at',
             'offered_salary_min','offered_salary_max','offered_salary_currency','salary_period','salary_is_predicted',
@@ -427,6 +480,13 @@ def _process_job(job: JobRun):
                 'count': job.count,
                 'limit': job.limit,
                 'timings': job.timings,
+                'query_title': job.params.get('title'),
+                'merge': {
+                    'before': MERGE_STATS.get('last_before'),
+                    'after': MERGE_STATS.get('last_after'),
+                    'saved': MERGE_STATS.get('dedup_saved'),
+                    'effectiveness': (round(MERGE_STATS['dedup_saved']/MERGE_STATS['last_before'],3) if MERGE_STATS.get('last_before') else None),
+                }
             }
             with open(snap_file, 'a', encoding='utf-8') as fh:
                 fh.write(_json.dumps(record) + '\n')
@@ -533,6 +593,12 @@ def get_job(job_id: str):
         'token': jr.token if jr.status == 'done' else None,
         'progress': progress or None,
     }
+
+@app.post('/api/jobs/{job_id}/cancel')
+def cancel_job(job_id: str):
+    if not _cancel_job(job_id):
+        raise HTTPException(status_code=404, detail='job not found')
+    return {'job_id': job_id, 'status': 'cancelling'}
 
 @app.get('/api/jobs/{job_id}/download')
 def download_job(job_id: str):
@@ -1016,6 +1082,10 @@ def api_metrics():
         'tokens_active': len(TOKENS),
         'download_ips': len(DOWNLOAD_COUNTS),
         'event_tail': events_tail,
+        'merge_last_before': MERGE_STATS.get('last_before'),
+        'merge_last_after': MERGE_STATS.get('last_after'),
+        'merge_dedup_saved': MERGE_STATS.get('dedup_saved'),
+        'merge_effectiveness': (round(MERGE_STATS['dedup_saved']/MERGE_STATS['last_before'],3) if MERGE_STATS.get('last_before') else None),
     }
     # Write daily snapshot (once per day or on demand)
     write_daily_snapshot(metrics)
@@ -1089,6 +1159,9 @@ def api_health_summary(limit: int = 50):
     score_vals = [r['timings'].get('scoring_sec') for r in runs if r.get('timings',{}).get('scoring_sec') is not None]
     export_vals = [r['timings'].get('export_sec') for r in runs if r.get('timings',{}).get('export_sec') is not None]
     total_vals = [r['timings'].get('total_sec') for r in runs if r.get('timings',{}).get('total_sec') is not None]
+    merge_eff_vals = [r.get('merge',{}).get('effectiveness') for r in runs if r.get('merge',{}).get('effectiveness') is not None]
+    merge_saved_vals = [r.get('merge',{}).get('saved') for r in runs if r.get('merge',{}).get('saved') is not None]
+    merge_before_vals = [r.get('merge',{}).get('before') for r in runs if r.get('merge',{}).get('before') is not None]
     def _avg(v): return round(sum(v)/len(v),3) if v else None
     def _median(v):
         if not v: return None
@@ -1116,6 +1189,27 @@ def api_health_summary(limit: int = 50):
         err_rate = errors / total
         if err_rate > 0.3:
             anomalies.append({'type':'error_rate_high','error_rate': round(err_rate,3),'window': total})
+    # merge effectiveness drop: if we have >=8 runs with effectiveness values, compare latest to median of previous
+    if len(merge_eff_vals) >= 8:
+        latest_eff = merge_eff_vals[-1]
+        prev_med_eff = _median(merge_eff_vals[:-1])
+        if prev_med_eff and latest_eff is not None:
+            # Drop condition: latest < 40% of previous median AND absolute difference >=0.08
+            if prev_med_eff > 0 and latest_eff < 0.4 * prev_med_eff and (prev_med_eff - latest_eff) >= 0.08:
+                anomalies.append({
+                    'type': 'merge_effectiveness_drop',
+                    'latest': latest_eff,
+                    'prev_median': round(prev_med_eff,3)
+                })
+    # sustained low merge effectiveness (recent degradation vs historical median)
+    if len(merge_eff_vals) >= 10:
+        latest_eff = merge_eff_vals[-1]
+        prev_values = merge_eff_vals[:-1]
+        hist_med = _median(prev_values)
+        recent_window = prev_values[-5:] if len(prev_values) >= 5 else prev_values
+        recent_med = _median(recent_window)
+        if hist_med and recent_med and hist_med > 0.30 and recent_med < 0.15 and latest_eff is not None and latest_eff < 0.15:
+            anomalies.append({'type': 'merge_effectiveness_sustained_low', 'hist_median': round(hist_med,3), 'recent_median': round(recent_med,3), 'latest': latest_eff})
     return {
         'runs': total,
         'averages': {
@@ -1123,9 +1217,21 @@ def api_health_summary(limit: int = 50):
             'scoring_sec': _avg(score_vals),
             'export_sec': _avg(export_vals),
             'total_sec': _avg(total_vals),
+            'merge_effectiveness_avg': _avg(merge_eff_vals),
+            'merge_saved_avg': _avg(merge_saved_vals),
+            'merge_before_avg': _avg(merge_before_vals),
         },
         'latest': runs[-1],
         'anomalies': anomalies,
+        'merge_series': [
+            {
+                'ts': r.get('ts'),
+                'effectiveness': r.get('merge',{}).get('effectiveness'),
+                'saved': r.get('merge',{}).get('saved'),
+                'before': r.get('merge',{}).get('before'),
+                'after': r.get('merge',{}).get('after')
+            } for r in runs if r.get('merge',{}).get('effectiveness') is not None
+        ][-50:],
     }
 
 @app.get('/api/skill_recommendations')

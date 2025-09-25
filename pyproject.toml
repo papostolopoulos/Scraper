@@ -68,3 +68,13 @@ known-first-party = ["jobminer"]
 
 [tool.ruff.lint.per-file-ignores]
 "scraper/tests/*" = ["S101","PL"]
+
+[tool.coverage.run]
+branch = true
+source = ["scraper"]
+omit = ["scraper/tests/*","scraper/web/index.html"]
+
+[tool.coverage.report]
+fail_under = 0  # placeholder; will be bumped by +2% gate script later
+skip_empty = true
+show_missing = true
