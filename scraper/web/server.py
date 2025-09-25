@@ -431,6 +431,8 @@ def _process_job(job: JobRun):
             }
             with open(snap_file, 'a', encoding='utf-8') as fh:
                 fh.write(_json.dumps(record) + '\n')
+            # Prune snapshot file to enforce retention limits
+            _prune_snapshot_file(snap_file)
         except Exception:
             pass
         _prune_jobs()
