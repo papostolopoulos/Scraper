@@ -140,6 +140,8 @@ app.add_middleware(
 _default_tmp_root = Path(os.getenv("JOBMINER_TMP_DIR") or (Path(tempfile.gettempdir()) / "jobminer_artifacts"))
 TMP_DIR = _default_tmp_root
 TMP_DIR.mkdir(parents=True, exist_ok=True)
+JOBS_DIR = TMP_DIR / "jobs"
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
 # In-memory registry mapping token -> {data: bytes | None, created: datetime}
 TOKENS: dict[str, dict] = {}
@@ -204,6 +206,10 @@ def _register_job(j: JobRun):
     with JOBS_LOCK:
         JOBS[j.job_id] = j
     log_event('job_created', job_id=j.job_id, title=j.params.get('title'))
+    try:
+        _persist_job(j)
+    except Exception:
+        pass
 
 def _get_job(job_id: str) -> Optional[JobRun]:
     with JOBS_LOCK:
@@ -219,6 +225,31 @@ def _prune_jobs():
                 remove.append(jid)
         for jid in remove:
             JOBS.pop(jid, None)
+def _persist_job(jr: JobRun):
+    """Write a minimal job summary to disk so state survives reloader restarts."""
+    try:
+        rec = {
+            'job_id': jr.job_id,
+            'status': jr.status,
+            'error': jr.error,
+            'timings': jr.timings,
+            'count': jr.count,
+            'limit': jr.limit,
+            'token': jr.token,
+        }
+        (JOBS_DIR / f"{jr.job_id}.json").write_text(_json.dumps(rec), encoding='utf-8')
+    except Exception:
+        pass
+
+def _load_persisted_job(job_id: str) -> Optional[dict]:
+    p = JOBS_DIR / f"{job_id}.json"
+    if not p.exists():
+        return None
+    try:
+        import json as _j
+        return _j.loads(p.read_text(encoding='utf-8'))
+    except Exception:
+        return None
     # Remove orphan artifact directories? Artifacts are single csv files already handled by token pruning.
 
 def _process_job(job: JobRun):
@@ -226,6 +257,10 @@ def _process_job(job: JobRun):
     t_total = time.perf_counter()
     try:
         params = job.params
+        try:
+            _persist_job(job)
+        except Exception:
+            pass
         job.status = 'fetching'
         log_event('job_fetch_start', job_id=job.job_id)
         resume_path: Path = params['resume_path']
@@ -294,8 +329,9 @@ def _process_job(job: JobRun):
             jobs = jobs[:limit]
         job.count = len(jobs)
         # DB + scoring
-        job.status = 'scoring'
+    job.status = 'scoring'
         log_event('job_scoring_start', job_id=job.job_id, fetched=job.count)
+    _persist_job(job)
         db = JobDB()
         db.upsert_jobs(jobs)
         seed_path = Path("scraper/config/seed_skills.txt")
@@ -312,8 +348,9 @@ def _process_job(job: JobRun):
             score_all(db, resume_path, seed_path, write_summary=False, max_workers=1, progress_cb=_progress_cb)
         job.timings['scoring_sec'] = round(time.perf_counter() - t_score, 3)
         # Export
-        job.status = 'exporting'
+    job.status = 'exporting'
         log_event('job_export_start', job_id=job.job_id)
+    _persist_job(job)
         export_dir = TMP_DIR / uuid.uuid4().hex
         exporter = Exporter(db, export_dir, stream=True)
         t_export = time.perf_counter()
@@ -356,15 +393,21 @@ def _process_job(job: JobRun):
         _prune_tokens()
         job.token = token
         job.artifact_file = file_path if 'file_path' in locals() else None
-        job.status = 'done'
+    job.status = 'done'
+    _persist_job(job)
     except Exception as e:
         job.status = 'error'
         job.error = str(e)
         log_event('job_error', job_id=job.job_id, error=str(e))
+        _persist_job(job)
     finally:
         job.timings['total_sec'] = round(time.perf_counter() - t_total, 3)
         if job.status == 'done':
             log_event('job_done', job_id=job.job_id, total_sec=job.timings['total_sec'])
+        try:
+            _persist_job(job)
+        except Exception:
+            pass
         try:
             # Attempt cleanup of resume temp file
             rp = job.params.get('resume_path')
@@ -451,7 +494,21 @@ async def create_job(
 def get_job(job_id: str):
     jr = _get_job(job_id)
     if not jr:
-        raise HTTPException(status_code=404, detail='job not found')
+        # Fallback to persisted summary
+        rec = _load_persisted_job(job_id)
+        if not rec:
+            raise HTTPException(status_code=404, detail='job not found')
+        progress = None
+        return {
+            'job_id': rec.get('job_id', job_id),
+            'status': rec.get('status', 'error'),
+            'error': rec.get('error'),
+            'timings': rec.get('timings', {}),
+            'count': rec.get('count'),
+            'limit': rec.get('limit'),
+            'token': rec.get('token') if rec.get('status') == 'done' else None,
+            'progress': progress,
+        }
     # Extract lightweight progress metrics
     progress = {}
     for k,v in jr.timings.items():
@@ -476,13 +533,29 @@ def get_job(job_id: str):
 @app.get('/api/jobs/{job_id}/download')
 def download_job(job_id: str):
     jr = _get_job(job_id)
-    if not jr:
-        raise HTTPException(status_code=404, detail='job not found')
-    if jr.status != 'done' or not jr.token:
-        raise HTTPException(status_code=400, detail='job not ready')
-    # Reuse existing token download logic by delegating
-    return StreamingResponse(io.BytesIO((TOKENS.get(jr.token) or {}).get('data') or (TMP_DIR / f"{jr.token}.csv").read_bytes()), media_type='text/csv', headers={
-        'Content-Disposition': f'attachment; filename=job_results_{jr.token[:8]}.csv'
+    token = None
+    if jr:
+        if jr.status != 'done' or not jr.token:
+            raise HTTPException(status_code=400, detail='job not ready')
+        token = jr.token
+    else:
+        # Fallback to persisted summary
+        rec = _load_persisted_job(job_id)
+        if not rec:
+            raise HTTPException(status_code=404, detail='job not found')
+        if rec.get('status') != 'done' or not rec.get('token'):
+            raise HTTPException(status_code=400, detail='job not ready')
+        token = rec.get('token')
+    # Stream from memory or disk using token
+    blob = (TOKENS.get(token) or {}).get('data')
+    if not blob:
+        file_path = TMP_DIR / f"{token}.csv"
+        if file_path.exists():
+            blob = file_path.read_bytes()
+        else:
+            raise HTTPException(status_code=404, detail='artifact missing')
+    return StreamingResponse(io.BytesIO(blob), media_type='text/csv', headers={
+        'Content-Disposition': f'attachment; filename=job_results_{token[:8]}.csv'
     })
 
 def _prune_tokens():
