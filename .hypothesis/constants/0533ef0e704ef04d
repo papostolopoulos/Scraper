@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scripts\weekly_summary.py
+# hypothesis_version: 6.140.2
+
+[130, 2000, '# Weekly Summary', '+00:00', '--days', '--json', '--out', '--runs', '1', '2', '3', '4+', 'Top titles:', 'Z', '__main__', 'avg_fetch_sec', 'avg_scoring_sec', 'avg_total_sec', 'buckets', 'done', 'effectiveness', 'fetch_sec', 'merge', 'merge_eff_max', 'merge_eff_median', 'merge_eff_min', 'query_title', 'scoring_sec', 'snapshots/runs.jsonl', 'status', 'store_true', 'success_runs', 'timings', 'top_titles', 'total_runs', 'total_sec', 'ts', 'utf-8']

@@ -402,14 +402,13 @@ Prepared: (Generated automatically)
 | Release Readiness | Manual steps | Add release GitHub Action (tag -> build + changelog) | Consistency |
 
 <!-- NEXT_STEP_START -->
-### Suggested Next Step (Updated Sep 25, 2025)
-Reliability & UI visualization follow-on (cancellation + anomalies DONE):
-1. Add tests for persistence reload (simulate process restart: clear in-memory JOBS, ensure GET fallback) and hard cap enforcement path.
-2. UI merge effectiveness sparkline: client chart using `merge_series` (median & latest tooltip) + add to README screenshot later.
-3. Integrate provenance diversity output into weekly summary (append section if JSON present) + optional markdown table.
-4. Increment coverage gate baseline after adding new tests (script auto-ratchets >0.5% increases).
-5. Consider WebSocket (or SSE) push channel for progress to reduce polling overhead (research feasibility, optional).
-6. Document cancellation endpoint & anomaly types in observability guide.
+### Suggested Next Step (Updated Sep 27, 2025)
+Reliability hardening and reporting automatcancel + sustained-low anomaly + sparkline + weekly report workflow DONE):
+1. Add small targeted tests for: persisted job reload fallback and hard-cap enforcement on CSV row count (smoke level).
+2. Expand observability tests around `/api/health/summary` anomaly flags (fetch spike and sustained-low) using synthetic snapshots.
+3. Enable coverage ratchet in CI by seeding scripts/.coverage_baseline and iterating until stable, then remove the soft-fail echo.
+4. Optional polish: color thresholds on merge-effectiveness sparkline; prototype SSE/WebSocket progress to reduce polling.
+5. Prep a 0.2.x+1 release: bump version, update CHANGELOG with reliability/anomaly/automation changes, and tag.
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.

@@ -1,1 +1,0 @@
-{"jobs": {"total": 0}, "statuses": {}, "avg_fetch_sec": null, "avg_scoring_sec": null, "avg_export_sec": null, "avg_total_sec": null, "tokens_active": 2, "download_ips": 0, "event_tail": [], "merge_last_before": 10, "merge_last_after": 7, "merge_dedup_saved": 3, "merge_effectiveness": 0.3, "ts": "2025-09-25T07:18:02.329219+00:00"}

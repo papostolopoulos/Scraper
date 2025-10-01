@@ -249,6 +249,29 @@ class JobDB:
         data = dict(zip(cols, row))
         return self._row_to_job(data)
 
+    def retain_only(self, job_ids: Iterable[str]):
+        """Delete all jobs not in the provided iterable of job_ids.
+
+        This is used to enforce a hard cap on the number of jobs present
+        for scoring/export, primarily in test and CI environments.
+        """
+        ids = list(job_ids)
+        if not ids:
+            # If empty list provided, clear table entirely
+            try:
+                self._conn.execute("DELETE FROM jobs")
+                self._conn.commit()
+            except Exception:
+                pass
+            return
+        # Build a parameterized NOT IN clause
+        placeholders = ",".join(["?"] * len(ids))
+        try:
+            self._conn.execute(f"DELETE FROM jobs WHERE job_id NOT IN ({placeholders})", ids)
+            self._conn.commit()
+        except Exception:
+            # Best-effort; ignore failures in environments where PRAGMA or locks interfere
+            pass
     def update_status(self, job_id: str, status: str):
         import datetime as dt
         cur = self._conn.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,))

@@ -503,7 +503,7 @@ def extract_job_from_panel(page: Page) -> Dict[str, Any]:
                 if low in {'remote','hybrid','on-site','onsite','on site'}:
                     work_mode_token = 'remote' if 'remote' in low else ('hybrid' if 'hybrid' in low else 'onsite')
                     # Only set later if not already inferred; stash in closure scope via list hack
-                    if 'work_mode' not in locals() or not work_mode:  # work_mode var defined later; safe guard
+                    if ('work_mode' not in locals()) or (not locals().get('work_mode')):  # guard if not yet set
                         work_mode = work_mode_token  # type: ignore
                     continue
                 # Company heuristic: pick middle token if we have title already and company still unknown
@@ -513,7 +513,7 @@ def extract_job_from_panel(page: Page) -> Dict[str, Any]:
                         company = company or tok
                 # Location heuristic: token with comma or multi-word and capitalized
                 if (',' in tok or len(tok.split()) <= 5) and not any(x in low for x in ['remote','hybrid','on-site','onsite']) and re.search(r'[A-Za-z]', tok):
-                    if (not 'location' in locals()) or not locals().get('location'):  # location set later
+                    if ('location' not in locals()) or (not locals().get('location')):  # location set later
                         # Very light filter: must contain at least one capital letter and not solely job terms
                         if any(ch.isupper() for ch in tok):
                             location = tok  # type: ignore

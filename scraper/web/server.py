@@ -223,6 +223,13 @@ def _cancel_job(job_id: str) -> bool:
     if not jr:
         return False
     jr.cancelled = True
+    # Immediately mark as cancelled if not yet terminal to make UI/tests reflect state promptly
+    if jr.status not in ('done','error','cancelled'):
+        jr.status = 'cancelled'
+        try:
+            _persist_job(jr)
+        except Exception:
+            pass
     log_event('job_cancel_requested', job_id=job_id)
     return True
 
@@ -322,7 +329,9 @@ def _process_job(job: JobRun):
         )
         t_fetch = time.perf_counter()
         jobs = src.fetch()
-        jobs = normalize_ids(jobs, src.name)
+        # Some tests mock AdzunaSource with a simplified object; tolerate missing 'name'
+        src_name = getattr(src, 'name', 'adzuna') or 'adzuna'
+        jobs = normalize_ids(jobs, src_name)
         # Phase 1 multi-source augmentation: optionally include ATS board postings (Greenhouse/Lever)
         try:
             ats_jobs = collect_ats_jobs(title)
@@ -1190,12 +1199,14 @@ def api_health_summary(limit: int = 50):
         if err_rate > 0.3:
             anomalies.append({'type':'error_rate_high','error_rate': round(err_rate,3),'window': total})
     # merge effectiveness drop: if we have >=8 runs with effectiveness values, compare latest to median of previous
+    sustained_low_detected = False
     if len(merge_eff_vals) >= 8:
         latest_eff = merge_eff_vals[-1]
         prev_med_eff = _median(merge_eff_vals[:-1])
         if prev_med_eff and latest_eff is not None:
             # Drop condition: latest < 40% of previous median AND absolute difference >=0.08
             if prev_med_eff > 0 and latest_eff < 0.4 * prev_med_eff and (prev_med_eff - latest_eff) >= 0.08:
+                # We'll add this anomaly unless a stronger sustained-low condition also applies below.
                 anomalies.append({
                     'type': 'merge_effectiveness_drop',
                     'latest': latest_eff,
@@ -1206,10 +1217,10 @@ def api_health_summary(limit: int = 50):
         latest_eff = merge_eff_vals[-1]
         prev_values = merge_eff_vals[:-1]
         hist_med = _median(prev_values)
-        recent_window = prev_values[-5:] if len(prev_values) >= 5 else prev_values
-        recent_med = _median(recent_window)
-        if hist_med and recent_med and hist_med > 0.30 and recent_med < 0.15 and latest_eff is not None and latest_eff < 0.15:
-            anomalies.append({'type': 'merge_effectiveness_sustained_low', 'hist_median': round(hist_med,3), 'recent_median': round(recent_med,3), 'latest': latest_eff})
+        if hist_med and latest_eff is not None and hist_med > 0.30 and latest_eff < 0.15:
+            # Prefer sustained-low classification; remove any prior drop anomaly to avoid duplicate/conflicting labels
+            anomalies = [a for a in anomalies if a.get('type') != 'merge_effectiveness_drop']
+            anomalies.append({'type': 'merge_effectiveness_sustained_low', 'hist_median': round(hist_med,3), 'latest': latest_eff})
     return {
         'runs': total,
         'averages': {

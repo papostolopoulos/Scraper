@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\db.py
+# hypothesis_version: 6.140.2
+
+[0.0, ',', ';', '?', 'DELETE FROM jobs', 'SELECT * FROM jobs', 'Z', 'applied', 'apply_method', 'apply_rate', 'apply_url', 'benefits', 'collected_at', 'company_linkedin_id', 'company_map_key', 'company_map_key TEXT', 'company_name', 'data', 'db.sqlite', 'description_clean', 'description_raw', 'employment_type', 'enrichment_run_at', 'geocode_lat', 'geocode_lat REAL', 'geocode_lon', 'geocode_lon REAL', 'job_id', 'location', 'location_meta', 'location_meta TEXT', 'location_normalized', 'offered_salary_max', 'offered_salary_min', 'page_title', 'page_title TEXT', 'posted_at', 'provenance', 'provenance TEXT', 'recruiter_profiles', 'review_rate', 'reviewed', 'score_breakdown', 'score_total', 'seniority_level', 'shortlist_rate', 'shortlisted', 'skills_extracted', 'skills_meta', 'skills_meta TEXT', 'status', 'title', 'total_jobs', 'work_mode']

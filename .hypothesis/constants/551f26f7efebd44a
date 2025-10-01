@@ -1,0 +1,4 @@
+# file: C:\Users\Paris Apostolopoulos\OneDrive\Documents\Scraper\scraper\jobminer\multi_source.py
+# hypothesis_version: 6.140.2
+
+[0.0, 0.35, ',', '0', '0.35', '1', '50', 'JOBMINER_GH_SLUGS', 'JOBMINER_LEVER_SLUGS', '[^A-Za-z0-9+.#]+', 'adzuna', 'collect_ats_jobs', 'greenhouse', 'lever', 'merge_and_enrich', 'on', 'provenance', 'true', 'yes']

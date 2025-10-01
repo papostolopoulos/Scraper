@@ -14,7 +14,6 @@ from .anomaly import detect_anomalies
 from .semantic_toggle import semantic_enabled
 import os, threading, concurrent.futures, math
 from .responsibility_match import compute_overlap, compute_semantic_matches, infer_additional_skills
-import yaml
 import logging
 import json, time
 from .settings import SETTINGS
@@ -98,14 +97,17 @@ def score_all(
 
     # Optional global job hard cap (extra safety) applied *after* DB fetch but before processing
     job_cap_env = os.getenv('JOBMINER_HARD_JOB_CAP')
+    jobs = db.fetch_all()
     if job_cap_env and job_cap_env.isdigit():
         cap = max(1, int(job_cap_env))
-        jobs = db.fetch_all()
         if len(jobs) > cap:
-            jobs = jobs[:cap]
-            db._jobs = jobs  # NOTE: internal direct assignment (safe for in-memory DB abstraction)
-    else:
-        jobs = db.fetch_all()
+            # Keep the first cap job_ids (stable order as fetched)
+            keep_ids = [j.job_id for j in jobs[:cap]]
+            try:
+                db.retain_only(keep_ids)
+            except Exception:
+                pass
+            jobs = db.fetch_all()
     # We'll process as before but store skill metrics during processing using a two-phase approach:
 
     # Frequency map will be filled dynamically; we first extract skills per job then compute weighting.
