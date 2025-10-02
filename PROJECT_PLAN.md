@@ -449,13 +449,12 @@ Updated: Oct 1, 2025 — status and plan auto-synced with latest CI/tests.
 | Release Readiness | Manual steps | Add release GitHub Action (tag -> build + changelog) | Consistency |
 
 <!-- NEXT_STEP_START -->
-### Suggested Next Step (Updated Oct 1, 2025)
-Post-0.2.1 wrap-up and publication:
-1. Tag and publish 0.2.1: create and push `v0.2.1` to trigger the Release. The weekly summary now populates via fallback from `scraper/data/exports/pipeline_history.jsonl`, so the release will include a non-empty `weekly_summary.md`.
-2. Optional: Trigger the "Publish Weekly Summary" workflow to refresh gh-pages.
-3. Coverage ratchet nudge: after CI on the tag, raise the coverage baseline by +2–4% if the uplift holds (keep incremental).
-4. Optional UX: add color thresholds to merge-effectiveness sparkline and prototype SSE/WebSocket progress to reduce polling.
-5. Next release planning: collect deltas for 0.2.2 (exporter edge branches, error-rate anomaly thresholds/docs).
+### Suggested Next Step (Updated Oct 2, 2025)
+Post-0.2.1 published:
+1. Confirm GitHub Release v0.2.1 ran to completion and that `snapshots/weekly_summary.md` is attached in assets. Pages publisher remains optional.
+2. Coverage ratchet: if CI on the tag holds or improves coverage, bump the baseline by +2–4% in `scripts/coverage_gate.py`.
+3. Reduce test warnings: close CSV file handle in `tests/test_exporter_small_branches.py`; drop `cov_branch` from pytest.ini or configure plugin.
+4. Prep 0.2.2: minor observability polish (explicit active_jobs count), exporter branch coverage, and docs for anomaly thresholds.
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.

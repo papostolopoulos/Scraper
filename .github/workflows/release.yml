@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch: {}
 
 jobs:
   build-and-release:
@@ -13,63 +14,61 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Determine release tag
+        id: tagvar
+        run: |
+          git fetch --tags --force
+          TAG="${GITHUB_REF_NAME}"
+          if [ -z "$TAG" ] || [[ "$TAG" != v* ]]; then
+            TAG=$(git describe --tags --abbrev=0)
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
       - name: Install build tooling
         run: |
           python -m pip install --upgrade pip
           python -m pip install build
+
       - name: Build wheel & sdist
         run: |
           python -m build
+
       - name: Generate weekly summary (optional)
         continue-on-error: true
         run: |
           python scripts/run_weekly_report.py --days 7 || true
-      - name: Extract version
-        id: version
-        run: |
-          echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-      - name: Extract changelog section
-        id: changelog
-        run: |
-          python - <<'PY'
-import re, pathlib, os
-cl = pathlib.Path('CHANGELOG.md').read_text(encoding='utf-8')
-tag = os.environ['GITHUB_REF_NAME']
-pattern = rf"## \[{re.escape(tag.lstrip('v'))}\].*?(?=\n## \[|\Z)"
-m = re.search(pattern, cl, re.DOTALL)
-if not m:
-    # Fallback to tag with leading v
-    pattern2 = rf"## \[{re.escape(tag)}\].*?(?=\n## \[|\Z)"
-    m = re.search(pattern2, cl, re.DOTALL)
-section = m.group(0).strip() if m else f"Release {tag}"
-# Escape EOF marker issues
-print(section)
-open('RELEASE_NOTES.txt','w',encoding='utf-8').write(section)
-PY
-      - name: Create GitHub Release
+
+      - name: Create GitHub Release (auto notes) with dist/*
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          body_path: RELEASE_NOTES.txt
+          tag_name: ${{ steps.tagvar.outputs.tag }}
+          name: ${{ steps.tagvar.outputs.tag }}
+          generate_release_notes: true
           draft: false
           prerelease: false
+          files: |
+            dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Attach weekly summary if present
         if: ${{ hashFiles('snapshots/weekly_summary.md') != '' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.tagvar.outputs.tag }}
           files: |
             snapshots/weekly_summary.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload artifacts
+
+      - name: Upload build artifacts (debug)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dist-artifacts
