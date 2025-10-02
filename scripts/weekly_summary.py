@@ -36,29 +36,93 @@ def _parse_ts(ts: str) -> datetime | None:
             return None
 
 
-def load_runs(path: Path, days: int | None = 7, limit: int = 2000) -> List[Dict[str, Any]]:
+def _read_jsonl(path: Path, limit: int) -> List[Dict[str, Any]]:
     if not path.exists():
         return []
-    lines = path.read_text(encoding='utf-8').splitlines()[-limit:]
+    try:
+        lines = path.read_text(encoding='utf-8').splitlines()[-limit:]
+    except Exception:
+        return []
     rows: List[Dict[str, Any]] = []
     for line in lines:
         line = line.strip()
         if not line:
             continue
         try:
-            obj = json.loads(line)
+            rows.append(json.loads(line))
         except Exception:
+            # tolerate bad lines
             continue
-        rows.append(obj)
+    return rows
+
+
+def _map_pipeline_history_record(obj: Dict[str, Any]) -> Dict[str, Any]:
+    """Map a pipeline_history.jsonl record into the runs.jsonl schema.
+
+    Expected input keys (best-effort):
+      - timestamp_utc (str)
+      - timing.total_seconds, timing.scoring_seconds (floats)
+      - score_distribution.count (int) or scored/collected_total as fallback
+    """
+    ts = obj.get('timestamp_utc')
+    timing = obj.get('timing', {}) or {}
+    score_dist = obj.get('score_distribution', {}) or {}
+    count = (
+        score_dist.get('count')
+        or obj.get('scored')
+        or obj.get('collected_total')
+        or 0
+    )
+    run: Dict[str, Any] = {
+        'ts': ts,
+        'status': 'done',  # history implies completed run
+        'count': count,
+        'limit': None,
+        'timings': {
+            # We may not have fine-grained fetch time; prefer available fields
+            'fetch_sec': None,
+            'scoring_sec': timing.get('scoring_seconds'),
+            'export_sec': timing.get('export_seconds'),
+            'total_sec': timing.get('total_seconds'),
+        },
+        'merge': {
+            'effectiveness': None,
+        },
+        'query_title': None,
+    }
+    return run
+
+
+def load_runs(path: Path, days: int | None = 7, limit: int = 2000) -> List[Dict[str, Any]]:
+    # Primary: read the provided runs.jsonl-like file
+    rows = _read_jsonl(path, limit)
     if days is None:
-        return rows
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    out: List[Dict[str, Any]] = []
-    for r in rows:
-        ts = _parse_ts(r.get('ts'))
-        if ts and ts >= cutoff:
-            out.append(r)
-    return out
+        primary = rows
+    else:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        primary = []
+        for r in rows:
+            ts = _parse_ts(r.get('ts'))
+            if ts and ts >= cutoff:
+                primary.append(r)
+
+    # If no primary runs and caller likely used the default snapshots/runs.jsonl,
+    # fall back to pipeline history so weekly summaries aren’t empty.
+    if not primary and path.as_posix().endswith('snapshots/runs.jsonl'):
+        alt = Path('scraper/data/exports/pipeline_history.jsonl')
+        hist_rows = _read_jsonl(alt, limit)
+        mapped: List[Dict[str, Any]] = [_map_pipeline_history_record(o) for o in hist_rows]
+        if days is None:
+            return mapped
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        out: List[Dict[str, Any]] = []
+        for r in mapped:
+            ts = _parse_ts(r.get('ts'))
+            if ts and ts >= cutoff:
+                out.append(r)
+        return out
+
+    return primary
 
 
 def summarize(runs: List[Dict[str, Any]]) -> Dict[str, Any]:

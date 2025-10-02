@@ -1,0 +1,46 @@
+name: Publish Weekly Summary
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: Number of days to include in the report window
+        required: false
+        default: '7'
+  schedule:
+    - cron: '5 6 * * 1' # Mondays 06:05 UTC, runs after Weekly Report
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          pip install -e .
+
+      - name: Generate weekly summary
+        env:
+          DAYS: ${{ inputs.days || 7 }}
+        run: |
+          python scripts/run_weekly_report.py --days "$DAYS" || true
+          mkdir -p _site
+          if [ -f snapshots/weekly_summary.md ]; then cp snapshots/weekly_summary.md _site/index.md; else echo "No weekly_summary.md found" > _site/index.md; fi
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: _site
+          publish_branch: gh-pages

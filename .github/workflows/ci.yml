@@ -158,7 +158,7 @@ PY
       - name: Enforce coverage gate (+2% over baseline if baseline file present)
         if: always()
         run: |
-          if [ -f scripts/coverage_gate.py ]; then python scripts/coverage_gate.py || echo "Coverage gate check failed"; fi
+          if [ -f scripts/coverage_gate.py ]; then python scripts/coverage_gate.py; fi
 
       - name: Upload artifacts
         if: always()

@@ -9,6 +9,18 @@ The format roughly follows Keep a Changelog and Semantic Versioning.
 - Packaging metadata (pyproject.toml) with console scripts.
 - Public package API exposing JobDB and JobPosting.
 
+## [0.2.1] - 2025-10-01
+### Added
+- Coverage uplift tests for normalization helpers, scoring edge cases, exporter fallback URL, and observability prune/metrics.
+- Optional weekly summary attachment in release workflow; Pages publish workflow already available.
+
+### Changed
+- CI: kept flaky rerun + coverage badge; ensure coverage gate script runs post-rerun.
+
+### Fixed
+- Robust daily snapshot writing from /api/metrics with age-based prune honored; tests for empty-state and mixed statuses.
+- Minor exporter branches covered (fallback apply_url, benefits normalized presence).
+
 ## [0.2.0] - 2025-09-16
 ### Added
 - Streaming CSV export mode to reduce memory footprint.

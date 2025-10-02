@@ -1,0 +1,1 @@
+{"jobs": {"total": 3}, "statuses": {"done": 2, "error": 1}, "avg_fetch_sec": 1.333, "avg_scoring_sec": 1.5, "avg_export_sec": 0.5, "avg_total_sec": 3.5, "tokens_active": 2, "download_ips": 0, "event_tail": [], "merge_last_before": 0, "merge_last_after": 0, "merge_dedup_saved": 0, "merge_effectiveness": null, "ts": "2025-10-01T07:08:55.264820+00:00"}

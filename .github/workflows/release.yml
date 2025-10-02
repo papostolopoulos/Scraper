@@ -24,6 +24,10 @@ jobs:
       - name: Build wheel & sdist
         run: |
           python -m build
+      - name: Generate weekly summary (optional)
+        continue-on-error: true
+        run: |
+          python scripts/run_weekly_report.py --days 7 || true
       - name: Extract version
         id: version
         run: |
@@ -54,6 +58,15 @@ PY
           body_path: RELEASE_NOTES.txt
           draft: false
           prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attach weekly summary if present
+        if: ${{ hashFiles('snapshots/weekly_summary.md') != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            snapshots/weekly_summary.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload artifacts

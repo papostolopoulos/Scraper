@@ -7,6 +7,7 @@ import tempfile
 
 import pytest
 from hypothesis import given, settings, strategies as st
+import pytest
 
 from scraper.jobminer import resume
 
@@ -78,6 +79,7 @@ def fake_pdf(tmp_path):
     return p
 
 
+@pytest.mark.slow
 @given(resume_texts())
 @settings(max_examples=60, deadline=500)
 def test_fuzz_build_resume_profile(monkeypatch, fake_pdf, data):

@@ -1,7 +1,7 @@
 # Job Miner Project Plan
 
 ## 1. Objective & Reliability Criteria
-**Objective (Updated Sep 25, 2025):** Deliver a simple web experience where a user can upload a resume, enter job search criteria, and download a CSV (capped at 100 roles) ranked against their skills—now with robust multi‑source ingestion (Greenhouse, Lever, Indeed local) and provenance-aware de‑duplication preserving determinism, transparency, and ToS compliance—augmented with an observability layer (structured logging, metrics, retention snapshots, anomaly detection) and performance-focused, accessible UI enhancements. Recent improvements: persistent async job state & artifacts across reloads, health badge + anomaly surfacing in UI, strict pre-scoring limit enforcement, environment-driven parallel scoring & hard caps, richer real-time progress (extract/score processed counts), and an automated weekly summary reporter for operational trends.
+**Objective (Updated Sep 30, 2025):** Deliver a simple web experience where a user can upload a resume, enter job search criteria, and download a CSV (capped at 100 roles) ranked against their skills—now with robust multi‑source ingestion (Greenhouse, Lever, Indeed local) and provenance-aware de‑duplication preserving determinism, transparency, and ToS compliance—augmented with an observability layer (structured logging, metrics, retention snapshots, anomaly detection) and performance-focused, accessible UI enhancements. Recent improvements: persistent async job state & artifacts across reloads, health badge + anomaly surfacing in UI, strict pre-scoring limit enforcement, environment-driven parallel scoring & hard caps, richer real-time progress (extract/score processed counts), automated weekly report generation (provenance diversity + summary), and a strict CI coverage ratchet (+2% over baseline) with baseline raised to 40.08% this run.
 
 **What Success Looks Like:**
 - You can run one command to collect (or ingest) jobs, score them, and export structured outputs (Excel / CSV) any day with consistent runtime and without manual cleanup.
@@ -101,10 +101,18 @@
 | Historical merge effectiveness tracking | Monitoring | Added merge stats series & averages to /api/health/summary (merge_series + effectiveness averages) |
 | Merge effectiveness drop anomaly | Monitoring | Detects sharp effectiveness declines (latest <40% prev median & delta >=0.08) in /api/health/summary |
 | Weekly summary markdown generator | Reporting | Aggregates last N days of runs.jsonl → snapshots/weekly/YYYY-WW.md (counts, timings, merge effectiveness, top titles) |
+| Weekly summary publishing (Pages/Release) | Reporting/Release | Automated gh-pages publisher and Release attachment for weekly_summary.md | Easier weekly visibility and packaged release notes |
+| 0.2.1 release prep | Release | Version bump + CHANGELOG + CI wiring | Clear versioning and reproducible release notes |
 | README async job API + progress docs | Documentation | Added section describing /api/jobs lifecycle, download endpoint, monitoring endpoints, progress bar heuristics |
 | Cancellation endpoint & cooperative cancellation | Reliability | /api/jobs/{id}/cancel + thread-safe flag and mid-phase abort checks |
 | Sustained low merge effectiveness anomaly | Monitoring | Detects prolonged degradation (recent median <0.15 vs historical >0.30) |
 | Provenance diversity analysis script | Reporting | Computes provenance_count distribution buckets and median |
+
+| Synthetic anomaly tests (/api/health/summary) | Observability Tests | Added snapshot-based tests for fetch time spike, sustained-low merge effectiveness, and merge series output | Prevents regressions in health monitoring |
+| Strict coverage ratchet (+2% over baseline) | Quality Gates | Enforced in CI via scripts/coverage_gate.py; baseline seeded and ratcheted to 40.08% | Guards against coverage regressions |
+| Lint signal hardening (Ruff E/F in CI) | Developer Hygiene | Focused CI lint on error/correctness classes; migrated config to [tool.ruff.lint] | Higher signal, fewer false alarms |
+| Persisted job GET fallback + hard job cap tests | Reliability | Added tests to verify disk-backed job retrieval and DB-level hard cap enforcement | Prevents state regressions and over-processing |
+| Weekly report workflow (schedule + manual) | Reporting Automation | Runs provenance diversity then weekly summary; uploads artifacts | Repeatable operational reporting |
 
 ## 3. Remaining Tasks (Updated)
 Updated thematic backlog after provenance & observability integration:
@@ -132,10 +140,29 @@ C. Reliability & Monitoring
 - (Done) Metrics endpoint (/api/metrics).
 - (Done) Snapshot retention & pruning.
 - (Done) Anomaly detection + /api/health/summary.
-- Add automated tests (metrics accuracy, snapshot append/prune, anomaly triggers).
+ - Add automated tests (metrics accuracy, snapshot append/prune, anomaly triggers: zero-jobs streak, error_rate_high).
 - Document observability env vars & runbook.
 - UI surfacing of health alerts & key metrics.
-- Weekly summary generation (markdown) (pending).
+- (Done) Weekly summary generation (markdown) and weekly report workflow (artifacts uploaded).
+ - (Done) Optional: publish weekly summary to GitHub Pages or attach to release automatically.
+
+### Weekly Summary — Execution & Publishing (v0.2.1)
+
+- Generate artifacts locally (uses venv):
+	- Task: Run “Run weekly report” in CI or locally run:
+		- `& '.\\.venv\\Scripts\\python.exe' scripts\\run_weekly_report.py --days 7`
+	- Outputs:
+		- `snapshots/provenance_diversity.json`
+		- `snapshots/weekly_summary.md`
+
+- Publish options:
+	- GitHub Pages (already set up): trigger the "Publish Weekly Summary" workflow (or wait for Monday 06:05 UTC). It publishes `_site/index.md` from `snapshots/weekly_summary.md` on branch `gh-pages`.
+	- GitHub Release attachment (added in v0.2.1): tag and push a release (e.g., `v0.2.1`). The release workflow will attach `snapshots/weekly_summary.md` if present.
+
+- Notes:
+	- If `snapshots/runs.jsonl` has no recent runs, the weekly summary will read “No runs in the selected period.”
+	- To ensure content, run the pipeline at least once in the week or point the script to a history file with activity.
+ - Monitor and tune coverage ratchet tolerance (e.g., adjust +Δ or path excludes) if it becomes too strict.
 
 D. Performance & Scaling
 - Benchmark multi-worker scoring; decide on enabling env variable.
@@ -254,6 +281,15 @@ Notes on compliance: Automated scraping of LinkedIn search results violates Link
 | Snapshot retention & pruning | Observability | 3 | 1 | Done | JSONL snapshots with age + max line pruning (configurable) |
 | Anomaly detection & /api/health/summary | Observability | 3 | 1 | Done | Spike, error-rate, zero-job streak alerts + snapshot tail |
 
+| Synthetic anomaly tests (/api/health/summary) | Quality | 2 | 1 | Done | Fetch spike, sustained-low, and merge series validated via snapshots |
+| CI coverage ratchet (+2% over baseline) | Quality | 1 | 0.25 | Done | Strict CI gate enabled; baseline set to 40.08% on latest run |
+| Weekly report workflow & artifacts | Reporting | 2 | 0.5 | Done | provenance_diversity.json + weekly_summary.md generated and stored |
+| Lint config hardening (Ruff E/F only) | Hygiene | 1 | 0.25 | Done | Focused on correctness errors; reduced noise |
+| Persisted GET fallback + hard job cap tests | Reliability | 2 | 0.5 | Done | Guards against state loss and over-processing |
+
+| Release 0.2.1 prep | Release | 1 | 0.5 | Done | Version bump + CHANGELOG; release attaches weekly summary |
+| Weekly summary publish automation | Reporting | 1 | 0.5 | Done | Pages publisher and Release attachment steps verified |
+
 > Actual Hours: Will be filled when each task completes; variance tracked (+/- %).
 
 ## 3c. Daily Sample Extraction Plan
@@ -299,6 +335,12 @@ For each completed task: `variance = (Actual - Est) / Est`. If variance > +40% t
 26. /api/metrics endpoint.
 27. Snapshot retention & pruning.
 28. Anomaly detection & /api/health/summary.
+29. Historical merge effectiveness series in health summary and related tests.
+30. Weekly report workflow (scheduled + manual) generating artifacts.
+31. Strict CI coverage ratchet (+2% over baseline) with baseline seeded and ratcheted to 40.08%.
+32. Synthetic anomaly tests for fetch spike, sustained-low, and merge series.
+33. Lint configuration hardened to E/F-only in CI to improve signal.
+34. Reliability tests for persisted job GET fallback and DB hard job cap.
 
 ## 5. Effort Estimate to Reach Completion
 (Assuming one experienced engineer with context; adjust if parallel work possible.)
@@ -347,6 +389,7 @@ DoD:
 - Automated collection requires explicit flag; CI ensures flag absent by default.
 - Property-based tests run green; fuzz test catches malformed edge cases deterministically.
 - Coverage threshold raised (e.g., line >=85%).
+	- Current status: Coverage ratchet enabled with baseline now 40.08%; will stair-step towards ≥85%.
 - Migration guide present and referenced in README.
 
 ### Milestone 4: Packaging & Release Readiness (Week 7)
@@ -357,7 +400,7 @@ DoD:
 - README and architecture diagram reflect final state.
 - All quality gates (lint, type, coverage, flaky policy) pass on release tag.
 
-(Stretch features to be scheduled after core completion or in separate post-MVP epics.)'];/
+(Stretch features to be scheduled after core completion or in separate post-MVP epics.)
 
 ## 7. Governance & Working Agreements
 - Keep flaky tests to an explicit small set; removal required once stabilized.
@@ -398,17 +441,21 @@ Prepared: (Generated automatically)
 | Onboarding | Long README | Add Quickstart + architecture diagram | Faster contributor ramp-up |
 | Test Signal | Flaky reruns limited | Add periodic flaky audit (remove stabilized) | Keeps suite lean |
 | Run Metrics | Single summary JSON | Append history + simple anomaly flags | Trend visibility |
+| Coverage Governance | Baseline set but previously non-strict | Enforce strict ratchet in CI (+2% over baseline) and tune as needed | Prevents regression while allowing gradual improvement |
+| Weekly Reporting | Manual checks | Schedule weekly workflow and optionally publish summary to Pages | Consistent operational visibility |
+
+Updated: Oct 1, 2025 — status and plan auto-synced with latest CI/tests.
 | Code Ownership | Broad | Mark OWNER in module headers (optional) | Accountability / review focus |
 | Release Readiness | Manual steps | Add release GitHub Action (tag -> build + changelog) | Consistency |
 
 <!-- NEXT_STEP_START -->
-### Suggested Next Step (Updated Sep 27, 2025)
-Reliability hardening and reporting automatcancel + sustained-low anomaly + sparkline + weekly report workflow DONE):
-1. Add small targeted tests for: persisted job reload fallback and hard-cap enforcement on CSV row count (smoke level).
-2. Expand observability tests around `/api/health/summary` anomaly flags (fetch spike and sustained-low) using synthetic snapshots.
-3. Enable coverage ratchet in CI by seeding scripts/.coverage_baseline and iterating until stable, then remove the soft-fail echo.
-4. Optional polish: color thresholds on merge-effectiveness sparkline; prototype SSE/WebSocket progress to reduce polling.
-5. Prep a 0.2.x+1 release: bump version, update CHANGELOG with reliability/anomaly/automation changes, and tag.
+### Suggested Next Step (Updated Oct 1, 2025)
+Post-0.2.1 wrap-up and publication:
+1. Tag and publish 0.2.1: create and push `v0.2.1` to trigger the Release. The weekly summary now populates via fallback from `scraper/data/exports/pipeline_history.jsonl`, so the release will include a non-empty `weekly_summary.md`.
+2. Optional: Trigger the "Publish Weekly Summary" workflow to refresh gh-pages.
+3. Coverage ratchet nudge: after CI on the tag, raise the coverage baseline by +2–4% if the uplift holds (keep incremental).
+4. Optional UX: add color thresholds to merge-effectiveness sparkline and prototype SSE/WebSocket progress to reduce polling.
+5. Next release planning: collect deltas for 0.2.2 (exporter edge branches, error-rate anomaly thresholds/docs).
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.

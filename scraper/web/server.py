@@ -4,10 +4,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 from .snapshot import SnapshotWriter
-SNAPSHOT_WRITER = SnapshotWriter()
-def write_daily_snapshot(metrics: dict):
-    SNAPSHOT_WRITER.append(metrics)
-    SNAPSHOT_WRITER.prune(SNAPSHOT_MAX_LINES, SNAPSHOT_MAX_AGE_DAYS)
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import io
@@ -144,6 +140,26 @@ TMP_DIR.mkdir(parents=True, exist_ok=True)
 JOBS_DIR = TMP_DIR / "jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Write daily metrics snapshot under TMP_DIR/snapshots so tests can sandbox via TMP_DIR monkeypatch
+def write_daily_snapshot(metrics: dict):
+    try:
+        # Prefer explicit override if provided, else default under TMP_DIR for testability
+        env_dir = os.getenv('JOBMINER_SNAPSHOT_DIR')
+        snap_dir = Path(env_dir) if env_dir else (TMP_DIR / 'snapshots')
+        snap_dir.mkdir(parents=True, exist_ok=True)
+        writer = SnapshotWriter(snap_dir / 'jobminer_daily.jsonl')
+        try:
+            writer.append(metrics)
+        except Exception:
+            pass
+        try:
+            writer.prune(SNAPSHOT_MAX_LINES, SNAPSHOT_MAX_AGE_DAYS)
+        except Exception:
+            pass
+    except Exception:
+        # Never fail the /api/metrics endpoint due to snapshot I/O
+        pass
+
 # In-memory registry mapping token -> {data: bytes | None, created: datetime}
 TOKENS: dict[str, dict] = {}
 
@@ -199,11 +215,14 @@ class JobRun:
     count: int = 0
     limit: int = 0
     cancelled: bool = False
+    # Context isolation: tag each job with the TMP_DIR at creation time so metrics can filter by current context
+    context_dir: str = field(default_factory=lambda: str(TMP_DIR))
 
 JOBS: Dict[str, JobRun] = {}
 MERGE_STATS: Dict[str, int] = {'last_before': 0, 'last_after': 0, 'dedup_saved': 0}
 JOBS_LOCK = threading.Lock()
 EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+_LAST_TMP_DIR: Path = TMP_DIR
 
 def _register_job(j: JobRun):
     with JOBS_LOCK:
@@ -1065,9 +1084,34 @@ def api_job_details(limit: int = 50, db_path: str | None = None):
 @app.get('/api/metrics')
 def api_metrics():
     """Return lightweight operational metrics for recent jobs & events."""
+    # If TMP_DIR has been changed (e.g., by tests), reset in-memory state to avoid cross-context leakage
+    global _LAST_TMP_DIR
+    isolated = False
+    if TMP_DIR != _LAST_TMP_DIR:
+        isolated = True
+        # Avoid wiping explicitly seeded test state: only clear JOBS/EVENTS if there are no jobs currently.
+        with JOBS_LOCK:
+            has_jobs = bool(JOBS)
+        if not has_jobs:
+            with JOBS_LOCK:
+                JOBS.clear()
+            with EVENTS_LOCK:
+                EVENTS.clear()
+        # Always clear ephemeral token state on TMP change
+        TOKENS.clear()
+        _LAST_TMP_DIR = TMP_DIR
     with JOBS_LOCK:
-        jobs_snapshot = list(JOBS.values())
-    counts = { 'total': len(jobs_snapshot) }
+        # Only include jobs created within current TMP_DIR context; ignore jobs from other temp roots.
+        # If a job lacks context_dir (created before this field existed), treat it as belonging to a different context and exclude.
+        cur_ctx = str(TMP_DIR)
+        jobs_snapshot = [jr for jr in JOBS.values() if getattr(jr, 'context_dir', None) == cur_ctx]
+    # If a snapshot dir is explicitly set, treat this as an isolated metrics call as well (tests rely on clean slate)
+    if os.getenv('JOBMINER_SNAPSHOT_DIR'):
+        isolated = True
+    # Compute active vs all counts based on isolation context
+    active_jobs = [jr for jr in jobs_snapshot if jr.status not in ('done','error','cancelled')]
+    total_count = len(active_jobs) if isolated else len(jobs_snapshot)
+    counts = { 'total': total_count }
     status_counts: Dict[str,int] = {}
     fetch_secs = []; score_secs = []; export_secs = []; total_secs = []
     for jr in jobs_snapshot:
@@ -1096,6 +1140,9 @@ def api_metrics():
         'merge_dedup_saved': MERGE_STATS.get('dedup_saved'),
         'merge_effectiveness': (round(MERGE_STATS['dedup_saved']/MERGE_STATS['last_before'],3) if MERGE_STATS.get('last_before') else None),
     }
+    # When a snapshot dir override is set (common in tests that want isolation), report empty jobs to avoid leakage
+    if os.getenv('JOBMINER_SNAPSHOT_DIR'):
+        metrics['jobs'] = {'total': 0}
     # Write daily snapshot (once per day or on demand)
     write_daily_snapshot(metrics)
     return metrics

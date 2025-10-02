@@ -16,6 +16,7 @@ VS Code tasks are included for quick testing and pipeline runs (`.vscode/tasks.j
 ## Observability
 - Health summary endpoint: `GET /api/health/summary` returns recent run averages, the latest run, and anomaly heuristics (fetch spike, zero-jobs streak, high error rate).
 - Metrics endpoint: `GET /api/metrics` surfaces operational counts, average phase timings, and a short event tail. A daily snapshot writer appends JSONL for trend analysis.
+  - Snapshot location priority: `JOBMINER_SNAPSHOT_DIR` (if set) else `%JOBMINER_TMP_DIR%/snapshots` (default under your system temp, test-friendly).
 - UI health badge: the static UI polls `/api/health/summary` every 30s and shows a small badge (OK/Warnings/Issues) with a details panel.
 
 ### Async Job API (Primary Workflow)
@@ -66,6 +67,10 @@ Reads `snapshots/runs.jsonl` (written automatically after each async job complet
  - (If present) provenance diversity summary can be appended by running the provenance script below first.
 
 Commit or publish this markdown weekly for historical baseline & anomaly reviews. Integrate with CI cron or GitHub Actions for automation.
+
+Publish to GitHub Pages (optional):
+- Manually trigger the workflow "Publish Weekly Summary" in Actions, or wait for the Monday 06:05 UTC schedule.
+- The workflow runs `scripts/run_weekly_report.py`, then publishes `snapshots/weekly_summary.md` to the `gh-pages` branch as `_site/index.md`.
 
 ### Web UI Progress Bar
 The static `index.html` uses the async job endpoints to show a dynamic progress bar:
@@ -136,6 +141,7 @@ Structure:
 - <token>.csv: Exported slim CSV results (one per completed job until TTL expiry).
 - tokens_state.json: Metadata (creation times) for active tokens (CSV may be lazily reloaded from disk).
 - snapshots/runs.jsonl: Append-only run snapshot lines (latest job status+timings) powering `/api/health/summary`.
+- snapshots/jobminer_daily.jsonl: Daily metrics snapshots appended by `/api/metrics` writer (path follows the snapshot location priority noted above).
 
 Cleanup & Retention:
 - Token & job retention aligned with token TTL (`JOBMINER_TOKEN_TTL_MINUTES`, default 60) — expired tokens are purged with their CSV.
