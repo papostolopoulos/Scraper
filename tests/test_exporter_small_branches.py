@@ -21,7 +21,8 @@ def test_exporter_fallback_apply_url_and_benefits(tmp_path: Path):
     db.upsert_jobs([job])
     out_dir = tmp_path/'out'
     exp = Exporter(db, out_dir, stream=True).export_all()
-    rows = list(csv.DictReader(open(exp['full_csv'], newline='', encoding='utf-8')))
+    with open(exp['full_csv'], newline='', encoding='utf-8') as f:
+        rows = list(csv.DictReader(f))
     assert rows[0]['apply_url'].startswith('https://www.linkedin.com/jobs/view/12345')
     # benefits_normalized column present (empty -> None)
     assert 'benefits_normalized' in rows[0]
