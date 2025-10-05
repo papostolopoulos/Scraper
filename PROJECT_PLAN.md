@@ -450,11 +450,22 @@ Updated: Oct 1, 2025 — status and plan auto-synced with latest CI/tests.
 
 <!-- NEXT_STEP_START -->
 ### Suggested Next Step (Updated Oct 2, 2025)
-Post-0.2.1 published:
-1. Confirm GitHub Release v0.2.1 ran to completion and that `snapshots/weekly_summary.md` is attached in assets. Pages publisher remains optional.
-2. Coverage ratchet: if CI on the tag holds or improves coverage, bump the baseline by +2–4% in `scripts/coverage_gate.py`.
-3. Reduce test warnings: close CSV file handle in `tests/test_exporter_small_branches.py`; drop `cov_branch` from pytest.ini or configure plugin.
-4. Prep 0.2.2: minor observability polish (explicit active_jobs count), exporter branch coverage, and docs for anomaly thresholds.
+Post-0.2.1 published (workflow fixed):
+1) Create and verify the GitHub Release for v0.2.1
+	- Actions → “Publish Release” → Run workflow on tag v0.2.1 (or re-run from the tag push).
+	- The workflow builds dist/*, creates the Release, and attaches `dist/*` and `snapshots/weekly_summary.md` (if present/generatable).
+	- Verify the Release page shows: source archives, wheel/sdist, and `weekly_summary.md` in Assets.
+
+2) Optional: Publish weekly summary to GitHub Pages
+	- Actions → “Publish Weekly Summary” → Run workflow (days: 7). Confirms `_site/index.md` on `gh-pages` reflects the latest summary.
+
+3) Coverage ratchet
+	- If CI on the tag holds or improves coverage, raise the baseline by +2–4% in `scripts/coverage_gate.py` and commit.
+
+4) Prep 0.2.2
+	- Observability: add an explicit `active_jobs` count to `/api/metrics` and minor edge-case tests.
+	- Exporter: cover small branches (fallbacks/none-paths) to lift branch coverage.
+	- Docs: brief runbook note on anomaly thresholds and Release/Pages publish steps.
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.
