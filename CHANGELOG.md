@@ -9,6 +9,20 @@ The format roughly follows Keep a Changelog and Semantic Versioning.
 - Packaging metadata (pyproject.toml) with console scripts.
 - Public package API exposing JobDB and JobPosting.
 
+## [0.2.2] - 2025-10-11
+### Added
+- Observability: Active jobs count in /api/metrics (non-terminal status tally).
+- Tests: Comprehensive exporter edge-case coverage (streaming parity, salary heuristics, fallback URL, env flags, redaction, benefits columns, empty jobs handling).
+- Tests: Robust anomaly detection edge cases (negative/missing fields, insufficient baseline, custom thresholds, malformed files, boundary conditions).
+
+### Changed
+- Documentation: Runbook notes for anomaly thresholds/tuning in `docs/observability.md`.
+- Documentation: Release process updated with GitHub Pages weekly summary publishing and troubleshooting in `docs/release_process.md`.
+
+### Fixed
+- Tests: Windows SQLite file locking issues by explicitly closing DB handles in tests.
+- Anomaly baseline logic in tests to ensure sufficient valid points within the recent window.
+
 ## [0.2.1] - 2025-10-01
 ### Added
 - Coverage uplift tests for normalization helpers, scoring edge cases, exporter fallback URL, and observability prune/metrics.
