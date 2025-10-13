@@ -44,3 +44,26 @@ This project exposes basic observability to make runs transparent and regression
 4. Test runs:
    - Use VS Code tasks: "Run tests (quick)".
    - CI publishes coverage artifacts; see Actions tab.
+
+## Anomaly thresholds & tuning
+- Detector: `scraper/jobminer/anomaly.py` reads the latest run and compares against the mean of the previous N runs.
+- Defaults: `recent_n = 5`, `drop_threshold_pct = 0.35` (i.e., trigger if current < 65% of baseline).
+- Signals evaluated (when present in history JSONL):
+  - `avg_score`: average composite score across processed jobs
+  - `skills_per_job`: average number of extracted skills per job
+- Data source: daily JSONL under `snapshots/metrics-YYYY-MM-DD.jsonl` (appended via Snapshot Writer) and run summaries via `scraper/jobminer/history.append_history`.
+
+How to adjust (temporary triage):
+1) Re-run detection with custom params (example from a Python REPL):
+   - `from pathlib import Path; from scraper.jobminer.anomaly import detect_anomalies`
+   - `detect_anomalies(Path('snapshots/metrics-2025-10-11.jsonl'), recent_n=7, drop_threshold_pct=0.45)`
+2) Investigate baseline quality:
+   - Ensure at least `recent_n` valid prior points exist; missing/None data will be skipped.
+   - Confirm spikes weren’t caused by intentionally smaller runs (e.g., test mode with few jobs).
+3) If noisy:
+   - Increase `recent_n` to smooth variance or temporarily raise `drop_threshold_pct`.
+   - Add more context in weekly summary for the affected days.
+
+Where surfaced:
+- `/api/health/summary` returns anomalies list consumed by UI and weekly reports.
+- The weekly summary page highlights anomaly messages with drop percentages and baselines.

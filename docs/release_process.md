@@ -19,6 +19,7 @@ Lightweight procedure for publishing a new version (manual tagging workflow).
    - Create tag: `git tag -a vX.Y.Z -m "Release X.Y.Z"`.
 4. Push
    - `git push origin main --tags`.
+   - If using GitHub Actions Release workflow, this will produce a Release with sdist/wheel assets.
 5. Build Artifact (optional pre-push if using CI to publish)
    - `python -m build` (add `build` to dev deps if needed) or `python -m pip install build`.
    - Wheel appears in `dist/`.
@@ -29,6 +30,20 @@ Lightweight procedure for publishing a new version (manual tagging workflow).
    - Increment to next dev version (e.g., `0.3.0-dev`) and add placeholder Unreleased section.
 8. Announce
    - Summarize key features/perf improvements.
+
+## GitHub Releases (CI)
+- The repository includes a Release workflow that can automatically publish wheels/sdists to the GitHub Release on tag push (e.g., `v0.2.1`).
+- Verify at: GitHub → Releases → latest tag page; confirm assets (wheel, sdist) are attached.
+
+## Publish Weekly Summary to GitHub Pages
+1. Open GitHub → Actions → “Publish Weekly Summary”.
+2. Click “Run workflow” and select the appropriate time window (e.g., 7 days).
+3. After it completes, verify GitHub Pages branch `gh-pages` contains updated `_site/index.md` and assets.
+4. Visit the Pages site URL (from repository Settings → Pages) and check the updated weekly summary.
+
+Troubleshooting Pages publish:
+- If `_site/index.md` didn’t change, confirm snapshots exist and the workflow ran on the intended branch.
+- Re-run the workflow or manually trigger after updating snapshots.
 
 ## Versioning Policy
 - PATCH: Bug fixes & non-breaking internal tweaks.

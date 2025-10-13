@@ -449,23 +449,24 @@ Updated: Oct 1, 2025 — status and plan auto-synced with latest CI/tests.
 | Release Readiness | Manual steps | Add release GitHub Action (tag -> build + changelog) | Consistency |
 
 <!-- NEXT_STEP_START -->
-### Suggested Next Step (Updated Oct 2, 2025)
-Post-0.2.1 published (workflow fixed):
-1) Create and verify the GitHub Release for v0.2.1
-	- Actions → “Publish Release” → Run workflow on tag v0.2.1 (or re-run from the tag push).
-	- The workflow builds dist/*, creates the Release, and attaches `dist/*` and `snapshots/weekly_summary.md` (if present/generatable).
-	- Verify the Release page shows: source archives, wheel/sdist, and `weekly_summary.md` in Assets.
+(Updated Oct 12, 2025)
+Post-0.2.2 is tagged and pushed. Focus on verification, reporting, and the 0.3.0 UI kickoff:
+1) Verify v0.2.2 Release assets
+	- Confirm GitHub Release shows wheel/sdist assets; re-run the Release workflow if needed.
+	- If you want weekly_summary.md attached to the Release, add it pre-tag next time or upload manually this run.
 
-2) Optional: Publish weekly summary to GitHub Pages
-	- Actions → “Publish Weekly Summary” → Run workflow (days: 7). Confirms `_site/index.md` on `gh-pages` reflects the latest summary.
+2) Weekly summary to GitHub Pages (optional)
+	- Actions → “Publish Weekly Summary” → Run for last 7 days.
+	- Verify `_site/index.md` on `gh-pages` and the public Pages URL renders the latest summary.
 
 3) Coverage ratchet
-	- If CI on the tag holds or improves coverage, raise the baseline by +2–4% in `scripts/coverage_gate.py` and commit.
+	- Current gate requires +3.0% over baseline (see `DELTA` in `scripts/coverage_gate.py`). Baseline auto-raises when coverage improves by ≥0.5%.
+	- Monitor CI for stability. If coverage consistently improves, consider adjusting `DELTA` or keeping steady to avoid churn.
 
-4) Prep 0.2.2
-	- Observability: add an explicit `active_jobs` count to `/api/metrics` and minor edge-case tests.
-	- Exporter: cover small branches (fallbacks/none-paths) to lift branch coverage.
-	- Docs: brief runbook note on anomaly thresholds and Release/Pages publish steps.
+4) Kick off MVP Web UI (0.3.0 series)
+	- Create a minimal form to upload resume + inputs and POST to local API; wire CSV download.
+	- Update README Quickstart for the UI flow and API keys.
+	- Track as Milestone “MVP Web UI” and start with the minimal form + CSV download.
 <!-- NEXT_STEP_END -->
 
 _Maintenance Note:_ Run `python scripts/update_next_step.py` after updating the progress table to refresh this Suggested Next Step section automatically.

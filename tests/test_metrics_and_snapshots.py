@@ -15,19 +15,24 @@ def test_api_metrics_basic_aggregates(monkeypatch):
     now = datetime.now(timezone.utc)
     j1 = JobRun(job_id='j1', created=now, status='done', timings={'fetch_sec': 1.0, 'scoring_sec': 2.0, 'export_sec': 0.5, 'total_sec': 3.5})
     j2 = JobRun(job_id='j2', created=now, status='error', timings={'fetch_sec': 2.0, 'scoring_sec': 1.0, 'export_sec': 0.5, 'total_sec': 3.5})
-    j3 = JobRun(job_id='j3', created=now, status='done', timings={'fetch_sec': 1.0})
+    j3 = JobRun(job_id='j3', created=now, status='running', timings={'fetch_sec': 1.0})  # Active job
+    j4 = JobRun(job_id='j4', created=now, status='pending', timings={})  # Active job
     with srv.JOBS_LOCK:
         srv.JOBS[j1.job_id] = j1
         srv.JOBS[j2.job_id] = j2
         srv.JOBS[j3.job_id] = j3
+        srv.JOBS[j4.job_id] = j4
     client = TestClient(app)
     r = client.get('/api/metrics')
     assert r.status_code == 200
     data = r.json()
     # Totals and statuses
-    assert data['jobs']['total'] == 3
-    assert data['statuses'].get('done', 0) == 2
+    assert data['jobs']['total'] == 4
+    assert data['jobs']['active'] == 2  # running + pending jobs
+    assert data['statuses'].get('done', 0) == 1
     assert data['statuses'].get('error', 0) == 1
+    assert data['statuses'].get('running', 0) == 1
+    assert data['statuses'].get('pending', 0) == 1
     # Averages (where present)
     assert data['avg_fetch_sec'] == 1.333 or abs(data['avg_fetch_sec'] - 1.333) < 0.001
     assert data['avg_scoring_sec'] == 1.5 or abs(data['avg_scoring_sec'] - 1.5) < 0.001

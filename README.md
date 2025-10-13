@@ -11,6 +11,12 @@ This repository contains a FastAPI backend for multi-source job ingestion and sc
     - `pip install -e .`
 - UI: open `index.html` in a browser and set the API Base if not `http://127.0.0.1:8000`.
 
+### Quickstart: Local Web UI
+- Set env vars for Adzuna: `$env:ADZUNA_APP_ID="<id>"; $env:ADZUNA_APP_KEY="<key>"`
+- Start backend (as above), then open `scraper/web/index.html` (file:// ok).
+- Upload a resume, fill required fields (title/location/distance), click "Search and Prepare CSV", then "Download CSV".
+- See `scraper/web/README_UI_QUICKSTART.md` for details.
+
 VS Code tasks are included for quick testing and pipeline runs (`.vscode/tasks.json`).
 
 ## Observability

@@ -1111,7 +1111,7 @@ def api_metrics():
     # Compute active vs all counts based on isolation context
     active_jobs = [jr for jr in jobs_snapshot if jr.status not in ('done','error','cancelled')]
     total_count = len(active_jobs) if isolated else len(jobs_snapshot)
-    counts = { 'total': total_count }
+    counts = { 'total': total_count, 'active': len(active_jobs) }
     status_counts: Dict[str,int] = {}
     fetch_secs = []; score_secs = []; export_secs = []; total_secs = []
     for jr in jobs_snapshot:

@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 COV_XML = pathlib.Path('coverage.xml')
 BASE = pathlib.Path('scripts/.coverage_baseline')
-DELTA = 2.0  # required improvement margin
+DELTA = 3.0  # required improvement margin (ratchet tightened)
 
 def current_coverage() -> float:
     if not COV_XML.exists():
@@ -38,7 +38,8 @@ def main():
     required = base_val + DELTA
     print(f'Baseline: {base_val:.2f}%  Current: {cur:.2f}%  Required: {required:.2f}%')
     if cur + 1e-9 < required:  # allow tiny float tolerance
-        print('Coverage gate not met (needs +2% over baseline).', file=sys.stderr)
+        # Message reflects current DELTA requirement
+        print(f'Coverage gate not met (needs +{DELTA:.0f}% over baseline).', file=sys.stderr)
         return 1
     # Update baseline if improved meaningfully (>0.5%) to ratchet upwards gradually
     if cur - base_val >= 0.5:
