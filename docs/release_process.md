@@ -35,11 +35,22 @@ Lightweight procedure for publishing a new version (manual tagging workflow).
 - The repository includes a Release workflow that can automatically publish wheels/sdists to the GitHub Release on tag push (e.g., `v0.2.1`).
 - Verify at: GitHub → Releases → latest tag page; confirm assets (wheel, sdist) are attached.
 
+### Attach Weekly Summary to a Release (optional)
+- Ensure `snapshots/weekly_summary.md` exists (generate locally or let the workflow generate it).
+- Re-run Actions → "Publish Release" with ref set to the target tag (e.g., `v0.2.2`).
+- The workflow installs the project, generates the weekly summary, and attaches it if present.
+- If not attached, check the workflow logs for the "Attach weekly summary if present" step and re-run if needed.
+
 ## Publish Weekly Summary to GitHub Pages
 1. Open GitHub → Actions → “Publish Weekly Summary”.
 2. Click “Run workflow” and select the appropriate time window (e.g., 7 days).
 3. After it completes, verify GitHub Pages branch `gh-pages` contains updated `_site/index.md` and assets.
 4. Visit the Pages site URL (from repository Settings → Pages) and check the updated weekly summary.
+
+Short checklist:
+- [ ] Run “Publish Weekly Summary” (or wait for Monday schedule)
+- [ ] Verify `gh-pages` updated
+- [ ] Open Pages URL to confirm content
 
 Troubleshooting Pages publish:
 - If `_site/index.md` didn’t change, confirm snapshots exist and the workflow ran on the intended branch.
